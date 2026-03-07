@@ -185,7 +185,10 @@ body {
   position: relative;
   flex: 1;
   min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 12px 12px 8px;
+  scrollbar-gutter: stable;
 }
 
 .chat-empty {
@@ -251,43 +254,198 @@ body {
   opacity: 0.65;
 }
 
-.oa-bubble-list {
-  height: 100%;
+.oa-message-list {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+  gap: 14px;
 }
 
-.oa-bubble-scroll {
-  padding-right: 6px;
+.oa-message-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.oa-bubble-list-content {
-  padding-inline: 8px;
+.oa-message-entry-ai {
+  align-items: flex-start;
 }
 
-.oa-bubble {
+.oa-message-entry-user {
+  align-items: flex-end;
+}
+
+.oa-message-row {
+  display: flex;
+  width: 100%;
+}
+
+.oa-message-row-ai {
+  justify-content: flex-start;
+}
+
+.oa-message-row-user {
+  justify-content: flex-end;
+}
+
+.oa-message-bubble {
+  max-width: min(820px, calc(100% - 24px));
+  padding: 14px 16px;
+  border-radius: 18px;
+  font-size: 14px;
+  line-height: 1.65;
   animation: bubble-reveal 260ms ease-out;
 }
 
-.oa-bubble-content {
-  border-radius: 16px;
-  font-size: 14px;
-  line-height: 1.65;
-}
-
-.oa-bubble-content-ai {
-  border: none;
+.oa-message-bubble-ai {
   background: var(--oa-surface-strong);
   box-shadow: 0 10px 24px rgba(20, 35, 42, 0.08);
 }
 
-.oa-bubble-content-user {
-  border: none;
-  color: #ffffff !important;
+.oa-message-bubble-user {
+  width: auto;
+  max-width: min(420px, calc(100% - 24px));
+  min-width: 0;
+  color: #ffffff;
   background: linear-gradient(145deg, #0f766e, #0f8b7e);
   box-shadow: 0 12px 24px rgba(15, 118, 110, 0.32);
+  overflow: hidden;
+}
+
+.oa-message-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+
+/* ── AI Bubble (ant-design/x Bubble component) ──────────────── */
+
+.oa-bubble-ai-root {
+  display: block;
+  max-width: min(820px, calc(100% - 24px));
+  animation: bubble-reveal 260ms ease-out;
+}
+
+.oa-bubble-ai-content {
+  background: var(--oa-surface-strong) !important;
+  box-shadow: 0 10px 24px rgba(20, 35, 42, 0.08) !important;
+  border-radius: 18px !important;
+  padding: 14px 16px !important;
+  font-size: 14px !important;
+  line-height: 1.65 !important;
+  color: var(--oa-text) !important;
+  border: none !important;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.oa-bubble-ai-content .ant-bubble-dot {
+  background: var(--oa-accent) !important;
+  opacity: 0.6;
+}
+
+/* ── Thinking / Tool meta panels ─────────────────────────────── */
+
+.oa-meta-panel-wrap {
+  max-width: min(820px, calc(100% - 24px));
+  padding: 10px 14px 12px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.24);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+
+.oa-meta-panel {
+  background: transparent;
+  overflow: visible;
+}
+
+.oa-meta-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  cursor: pointer;
+  list-style: none;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: rgba(43, 74, 73, 0.72);
+  user-select: none;
+}
+
+.oa-meta-summary::-webkit-details-marker {
+  display: none;
+}
+
+.oa-meta-count {
+  font-size: 11px;
+  letter-spacing: 0;
+  color: rgba(43, 74, 73, 0.48);
+}
+
+.oa-meta-body {
+  padding-top: 10px;
+}
+
+.oa-thinking-block,
+.oa-tool-input {
+  margin: 0;
+  padding: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.oa-thinking-block {
+  color: rgba(51, 65, 85, 0.88);
+  background: transparent;
+}
+
+.oa-tool-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.oa-tool-item {
+  padding: 0;
+  background: transparent;
+}
+
+.oa-tool-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: #223336;
+}
+
+.oa-tool-status {
+  color: var(--oa-muted);
+  font-size: 11px;
+}
+
+.oa-tool-summary {
+  margin: 4px 0 0;
+  color: #425466;
+  font-size: 12px;
+}
+
+.oa-tool-input {
+  margin-top: 6px;
+  color: #334155;
+  opacity: 0.82;
+  background: transparent;
 }
 
 .chat-input-wrap {
-  margin: 0 2px 4px;
+  margin: 10px 2px 4px;
   padding: 0;
   border: none;
   border-radius: 0;
@@ -325,6 +483,12 @@ body {
 .oa-sender .ant-btn-color-primary {
   background: var(--oa-accent);
   border-color: var(--oa-accent);
+}
+
+.oa-sender .ant-btn-color-primary:disabled {
+  background: var(--oa-accent);
+  border-color: var(--oa-accent);
+  opacity: 0.4;
 }
 
 .settings-drawer .ant-drawer-content {
@@ -418,6 +582,8 @@ body {
     transform: translateY(0);
   }
 }
+
+
 
 @media (max-width: 900px) {
   .app-shell {

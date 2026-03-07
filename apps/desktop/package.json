@@ -16,7 +16,9 @@
     "@ant-design/x": "^2",
     "antd": "^5",
     "react": "^19",
-    "react-dom": "^19"
+    "react-dom": "^19",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@tauri-apps/api": "^2",

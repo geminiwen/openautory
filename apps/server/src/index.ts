@@ -108,12 +108,18 @@ const server = Bun.serve<WsData>({
 
       try {
         for await (const event of agent.processMessageStream(msg)) {
-          if (event.type === 'assistant') {
-            ws.send(JSON.stringify({ type: 'assistant', sessionId: msg.sessionId, event }));
-          } else if (event.type === 'result') {
-            ws.send(JSON.stringify({ type: 'result', sessionId: msg.sessionId, event }));
-          } else if (event.type === 'system' && event.subtype === 'init') {
+          if (event.type === 'system' && event.subtype === 'init') {
             ws.send(JSON.stringify({ type: 'session_init', sessionId: msg.sessionId }));
+            continue;
+          }
+
+          if (
+            event.type === 'assistant'
+            || event.type === 'result'
+            || event.type === 'tool_progress'
+            || event.type === 'tool_use_summary'
+          ) {
+            ws.send(JSON.stringify({ type: event.type, sessionId: msg.sessionId, event }));
           }
         }
       } catch (err) {
