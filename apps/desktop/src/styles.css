@@ -34,7 +34,7 @@ body {
 .app-shell {
   position: relative;
   height: 100%;
-  padding: 40px 28px 24px;
+  padding: 28px 20px 18px;
 }
 
 .app-shell-macos {
@@ -78,8 +78,8 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  min-height: 68px;
-  padding: 16px 18px 10px 20px;
+  min-height: 56px;
+  padding: 8px 8px 6px 8px;
   border-bottom: none;
   background: transparent;
   user-select: none;
@@ -161,16 +161,12 @@ body {
   background: linear-gradient(145deg, #e45858, #ce3939);
 }
 
-.app-shell-macos .app-titlebar {
-  padding-left: 72px;
-}
-
 .app-content.ant-layout-content {
   position: relative;
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  padding: 6px 18px 14px;
+  padding: 2px 12px 8px;
   background: transparent;
 }
 
@@ -189,7 +185,7 @@ body {
   position: relative;
   flex: 1;
   min-height: 0;
-  padding: 20px 20px 10px;
+  padding: 12px 12px 8px;
 }
 
 .chat-empty {
@@ -291,7 +287,7 @@ body {
 }
 
 .chat-input-wrap {
-  margin: 0 6px 8px;
+  margin: 0 2px 4px;
   padding: 0;
   border: none;
   border-radius: 0;
@@ -437,9 +433,6 @@ body {
     padding: 12px 14px;
   }
 
-  .app-shell-macos .app-titlebar {
-    padding-left: 68px;
-  }
 
   .app-content.ant-layout-content {
     padding: 8px 14px 14px;
