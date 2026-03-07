@@ -8,9 +8,7 @@
     "start": "bun run src/index.ts"
   },
   "dependencies": {
-    "@openautory/adapter-feishu": "workspace:*",
     "@openautory/adapter-http": "workspace:*",
-    "@openautory/adapter-wecom": "workspace:*",
     "@openautory/core": "workspace:*",
     "@openautory/logger": "workspace:*",
     "@openautory/shared": "workspace:*",

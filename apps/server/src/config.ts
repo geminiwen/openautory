@@ -76,27 +76,5 @@ export const config = {
     extraMcpServers: parseMcpServers(process.env['MCP_SERVERS']),
   },
 
-  /**
-   * owner 用户 ID 集合（逗号分隔的环境变量 OWNER_USER_IDS）。
-   * 匹配的用户使用 bypassPermissions 权限；其余用户为 guest。
-   * ID 格式与平台一致：飞书用 open_id，企业微信用 userid。
-   */
   ownerUserIds: parseOwnerIds(process.env['OWNER_USER_IDS']),
-
-  feishu: {
-    enabled: !!process.env['FEISHU_APP_ID'],
-    appId: process.env['FEISHU_APP_ID'] ?? '',
-    appSecret: process.env['FEISHU_APP_SECRET'] ?? '',
-    verificationToken: process.env['FEISHU_VERIFICATION_TOKEN'] ?? '',
-    encryptKey: process.env['FEISHU_ENCRYPT_KEY'],
-  },
-
-  wecom: {
-    enabled: !!process.env['WECOM_CORP_ID'],
-    corpId: process.env['WECOM_CORP_ID'] ?? '',
-    agentId: process.env['WECOM_AGENT_ID'] ?? '',
-    secret: process.env['WECOM_SECRET'] ?? '',
-    token: process.env['WECOM_TOKEN'] ?? '',
-    encodingAESKey: process.env['WECOM_ENCODING_AES_KEY'] ?? '',
-  },
 };

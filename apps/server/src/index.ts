@@ -1,8 +1,6 @@
 import { AgentCore } from '@openautory/core';
 import type { UnifiedMessage, UserRole } from '@openautory/shared';
 import { createLogger } from '@openautory/logger';
-import { FeishuAdapter } from '@openautory/adapter-feishu';
-import { WecomAdapter } from '@openautory/adapter-wecom';
 import { HttpAdapter } from '@openautory/adapter-http';
 import { buildMcpRegistry } from './mcp/index.js';
 import { config } from './config.js';
@@ -16,29 +14,8 @@ const logger = createLogger('server', { level: config.log.level, logDir: config.
 // ── 初始化适配器 ────────────────────────────────────────────────
 const httpAdapter = new HttpAdapter();
 
-const feishuAdapter = config.feishu.enabled
-  ? new FeishuAdapter({
-      appId: config.feishu.appId,
-      appSecret: config.feishu.appSecret,
-      verificationToken: config.feishu.verificationToken,
-      ...(config.feishu.encryptKey ? { encryptKey: config.feishu.encryptKey } : {}),
-    })
-  : null;
-
-const wecomAdapter = config.wecom.enabled
-  ? new WecomAdapter({
-      corpId: config.wecom.corpId,
-      agentId: config.wecom.agentId,
-      secret: config.wecom.secret,
-      token: config.wecom.token,
-      encodingAESKey: config.wecom.encodingAESKey,
-    })
-  : null;
-
 // ── 组装 MCP 服务器注册表 ───────────────────────────────────────
-const activeAdapters = [httpAdapter, feishuAdapter, wecomAdapter].filter(
-  (a): a is NonNullable<typeof a> => a !== null,
-);
+const activeAdapters = [httpAdapter];
 
 const mcpServers = buildMcpRegistry(activeAdapters, config.anthropic.extraMcpServers);
 
@@ -115,40 +92,6 @@ const server = Bun.serve<WsData>({
       });
     }
 
-    // 飞书 Webhook
-    if (url.pathname === '/webhook/feishu' && feishuAdapter) {
-      const body = await req.clone().json() as { challenge?: string };
-      if (body.challenge) {
-        return Response.json({ challenge: body.challenge });
-      }
-
-      const msgs = await feishuAdapter.handleIncoming(req);
-      for (const msg of msgs) {
-        const m = withRole(msg);
-        agent.processMessage(m)
-          .then((reply) => feishuAdapter.sendReply(m, reply))
-          .catch((e) => logger.error('Feishu reply failed', { error: String(e) }));
-      }
-      return new Response('OK');
-    }
-
-    // 企业微信 Webhook
-    if (url.pathname === '/webhook/wecom' && wecomAdapter) {
-      if (req.method === 'GET') {
-        const echoStr = new URL(req.url).searchParams.get('echostr') ?? '';
-        return new Response(echoStr);
-      }
-
-      const msgs = await wecomAdapter.handleIncoming(req);
-      for (const msg of msgs) {
-        const m = withRole(msg);
-        agent.processMessage(m)
-          .then((reply) => wecomAdapter.sendReply(m, reply))
-          .catch((e) => logger.error('Wecom reply failed', { error: String(e) }));
-      }
-      return new Response('');
-    }
-
     return new Response('Not Found', { status: 404 });
   },
 
@@ -185,4 +128,4 @@ const server = Bun.serve<WsData>({
 });
 
 logger.info('Server running', { port: server.port });
-logger.info('Adapters initialized', { feishu: !!feishuAdapter, wecom: !!wecomAdapter, http: true, ws: true });
+logger.info('Adapters initialized', { http: true, ws: true });
