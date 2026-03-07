@@ -34,7 +34,7 @@ body {
 .app-shell {
   position: relative;
   height: 100%;
-  padding: 12px;
+  padding: 40px 28px 24px;
 }
 
 .app-shell-macos {
@@ -71,34 +71,6 @@ body {
   background: transparent;
 }
 
-.window-frame {
-  position: relative;
-  display: flex;
-  height: 100%;
-  min-height: 0;
-  flex-direction: column;
-  overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.56);
-  border-radius: 24px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.52), rgba(255, 255, 255, 0.26)),
-    rgba(255, 255, 255, 0.34);
-  backdrop-filter: blur(22px);
-  box-shadow:
-    0 24px 56px rgba(14, 30, 37, 0.14),
-    inset 0 1px 0 rgba(255, 255, 255, 0.65);
-  animation: shell-reveal 420ms cubic-bezier(0.22, 0.61, 0.36, 1);
-}
-
-.window-frame::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  border-radius: inherit;
-  border: 1px solid rgba(15, 118, 110, 0.08);
-}
-
 .app-titlebar {
   position: relative;
   z-index: 2;
@@ -107,9 +79,9 @@ body {
   justify-content: space-between;
   gap: 16px;
   min-height: 68px;
-  padding: 16px 18px 14px 20px;
-  border-bottom: 1px solid rgba(20, 32, 45, 0.08);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(241, 248, 246, 0.42));
+  padding: 16px 18px 10px 20px;
+  border-bottom: none;
+  background: transparent;
   user-select: none;
   cursor: default;
 }
@@ -170,29 +142,27 @@ body {
   min-width: 36px;
   height: 36px;
   padding: 0;
-  border: 1px solid rgba(20, 32, 45, 0.08);
+  border: none;
   border-radius: 11px;
-  color: rgba(29, 37, 48, 0.88);
-  background: rgba(255, 255, 255, 0.58);
-  box-shadow: 0 8px 18px rgba(15, 30, 37, 0.06);
-  backdrop-filter: blur(8px);
+  color: rgba(29, 37, 48, 0.82);
+  background: rgba(255, 255, 255, 0.28);
+  box-shadow: none;
+  backdrop-filter: none;
 }
 
 .titlebar-action-button.ant-btn:hover,
 .titlebar-window-button.ant-btn:hover {
   color: var(--oa-accent);
-  border-color: rgba(15, 118, 110, 0.18);
-  background: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.52);
 }
 
 .titlebar-window-button-close.ant-btn:hover {
   color: #fff5f5;
-  border-color: rgba(224, 62, 62, 0.14);
   background: linear-gradient(145deg, #e45858, #ce3939);
 }
 
 .app-shell-macos .app-titlebar {
-  padding-left: 92px;
+  padding-left: 72px;
 }
 
 .app-content.ant-layout-content {
@@ -200,7 +170,7 @@ body {
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  padding: 10px 28px 24px;
+  padding: 6px 18px 14px;
   background: transparent;
 }
 
@@ -321,33 +291,30 @@ body {
 }
 
 .chat-input-wrap {
-  position: relative;
-  padding: 14px 18px 18px;
-  border-top: none;
+  margin: 0 6px 8px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
   background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
 }
 
 .chat-input-wrap::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 18px;
-  right: 18px;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(20, 32, 45, 0.08), transparent);
+  content: none;
 }
 
 .oa-sender.ant-sender-main {
-  border-radius: 18px;
-  border: 1px solid rgba(20, 32, 45, 0.08);
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 12px 24px rgba(16, 33, 40, 0.1);
-  transition: border-color 180ms ease, box-shadow 180ms ease;
+  border-radius: 20px;
+  border: none;
+  background: rgba(255, 255, 255, 0.38);
+  box-shadow: none;
+  transition: background 180ms ease, box-shadow 180ms ease;
 }
 
 .oa-sender.ant-sender-main:focus-within {
-  border-color: rgba(15, 118, 110, 0.42);
-  box-shadow: 0 16px 28px rgba(15, 118, 110, 0.22);
+  background: rgba(255, 255, 255, 0.52);
+  box-shadow: 0 0 0 1px rgba(15, 118, 110, 0.12);
 }
 
 .oa-sender .ant-sender-input {
@@ -458,7 +425,7 @@ body {
 
 @media (max-width: 900px) {
   .app-shell {
-    padding: 10px;
+    padding: 14px;
   }
 
   .window-frame {
@@ -471,7 +438,7 @@ body {
   }
 
   .app-shell-macos .app-titlebar {
-    padding-left: 82px;
+    padding-left: 68px;
   }
 
   .app-content.ant-layout-content {

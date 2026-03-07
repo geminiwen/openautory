@@ -65,12 +65,7 @@ export default function App() {
   }, []);
 
   const handleShellMouseDown = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
-    if (event.button !== 0) {
-      return;
-    }
-
-    const target = event.target as HTMLElement;
-    if (target.closest('.window-frame')) {
+    if (event.button !== 0 || event.target !== event.currentTarget) {
       return;
     }
 
@@ -96,7 +91,6 @@ export default function App() {
         onMouseDown={handleShellMouseDown}
       >
         <Layout className="app-layout">
-          <div className="window-frame">
             <header className="app-titlebar" onMouseDown={handleTitlebarMouseDown}>
               <div className="app-titlebar-brand">
                 <span className="app-titlebar-logo">OA</span>
@@ -142,7 +136,6 @@ export default function App() {
           <Content className="app-content">
             <Chat />
           </Content>
-          </div>
 
           <Drawer
             className="settings-drawer"
