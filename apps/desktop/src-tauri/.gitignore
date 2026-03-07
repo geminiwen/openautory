@@ -1,0 +1,6 @@
+# Compiled sidecar binaries (platform-specific, built locally)
+binaries/server-*
+
+# Tauri build output
+target/
+gen/
