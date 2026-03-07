@@ -15,11 +15,28 @@ enum ServerHandle {
 }
 
 impl ServerHandle {
-    // 消耗 self，避免 CommandChild::kill(self) 的所有权问题
     fn kill(self) {
         match self {
             Self::Dev(mut child) => {
-                let _ = child.kill();
+                // Unix：先发 SIGTERM，等待最多 3s，超时再 SIGKILL
+                #[cfg(unix)]
+                {
+                    let pid = child.id();
+                    let _ = std::process::Command::new("kill")
+                        .args(["-TERM", &pid.to_string()])
+                        .status();
+                    for _ in 0..30 {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        if matches!(child.try_wait(), Ok(Some(_))) {
+                            return;
+                        }
+                    }
+                    let _ = child.kill();
+                }
+                #[cfg(not(unix))]
+                {
+                    let _ = child.kill();
+                }
             }
             #[cfg(not(debug_assertions))]
             Self::Sidecar(child) => {
@@ -45,6 +62,16 @@ fn main() {
         )
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
+            // Ctrl+C → app_handle.exit(0) → RunEvent::Exit → cleanup
+            {
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::signal::ctrl_c().await.ok();
+                    log::info!("Ctrl+C received, shutting down");
+                    app_handle.exit(0);
+                });
+            }
+
             #[cfg(debug_assertions)]
             {
                 // Dev 模式：直接用系统 bun --hot，支持热重载
@@ -97,7 +124,7 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
         .run(|app_handle, event| {
-            if let RunEvent::ExitRequested { .. } = event {
+            if let RunEvent::Exit = event {
                 // 用内层块让 state 和 MutexGuard 在 kill() 之前 drop
                 let handle = {
                     let state = app_handle.state::<ServerProcess>();

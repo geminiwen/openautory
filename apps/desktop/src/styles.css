@@ -281,7 +281,7 @@ body {
 
 .oa-bubble-content-user {
   border: none;
-  color: #ecfffb;
+  color: #ffffff !important;
   background: linear-gradient(145deg, #0f766e, #0f8b7e);
   box-shadow: 0 12px 24px rgba(15, 118, 110, 0.32);
 }

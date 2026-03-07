@@ -129,3 +129,13 @@ const server = Bun.serve<WsData>({
 
 logger.info('Server running', { port: server.port });
 logger.info('Adapters initialized', { http: true, ws: true });
+
+// 优雅关闭：等待已有请求完成后退出
+function shutdown(signal: string) {
+  logger.info(`Received ${signal}, shutting down gracefully`);
+  server.stop(true); // true = 等待已有请求完成
+  process.exit(0);
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

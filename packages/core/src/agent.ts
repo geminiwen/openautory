@@ -1,5 +1,5 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { SDKMessage, Options, McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKMessage, Options, McpServerConfig, SettingSource } from '@anthropic-ai/claude-agent-sdk';
 import type { UnifiedMessage, UserRole } from '@openautory/shared';
 import { createLogger } from '@openautory/logger';
 import type { Logger } from '@openautory/logger';
@@ -48,6 +48,14 @@ export interface AgentConfig {
    * key 为 MCP server 名称，value 为对应配置。
    */
   mcpServers?: Record<string, McpServerConfig>;
+  /**
+   * 加载哪些来源的 Claude Code 配置文件。
+   * - 'user'    ~/.claude/settings.json（全局用户配置）
+   * - 'project' .claude/settings.json（项目级配置，同时启用 CLAUDE.md 读取）
+   * - 'local'   .claude/settings.local.json（本地覆盖，不提交到 git）
+   * 默认：['user', 'project', 'local']
+   */
+  settingSources?: SettingSource[];
 }
 
 export type AgentMessageEvent = SDKMessage;
@@ -101,6 +109,7 @@ export class AgentCore {
       persistSession: persist,
       ...(entry ? { resume: entry.claudeSessionId } : {}),
       ...(this.config.mcpServers ? { mcpServers: this.config.mcpServers } : {}),
+      settingSources: this.config.settingSources ?? ['user', 'project', 'local'],
     };
 
     let capturedSessionId: string | undefined;

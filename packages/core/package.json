@@ -8,7 +8,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.45",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.71",
     "@openautory/logger": "workspace:*",
     "@openautory/shared": "workspace:*"
   }
