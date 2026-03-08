@@ -9,6 +9,8 @@
     "core:window:allow-minimize",
     "core:window:allow-start-dragging",
     "core:window:allow-toggle-maximize",
-    "log:allow-log"
+    "log:allow-log",
+    "dialog:allow-open",
+    "opener:allow-reveal-item-in-dir"
   ]
 }

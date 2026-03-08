@@ -52,6 +52,30 @@
   color: var(--oa-muted);
 }
 
+.projectPicker {
+  cursor: pointer;
+  color: var(--oa-accent, #0f766e);
+  transition: opacity 140ms ease;
+}
+
+.projectPicker:hover {
+  opacity: 0.7;
+}
+
+.projectPickerIcon {
+  font-size: 14px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+.projectMenuItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 140px;
+}
+
 .promptGrid {
   margin-top: 20px;
   display: flex;

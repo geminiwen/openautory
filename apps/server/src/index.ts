@@ -27,9 +27,9 @@ hotReloadState.stopServer?.();
 
 const logger = createLogger('server', { level: config.log.level, logDir: config.log.logDir });
 
-// ── 确保工作目录存在 ─────────────────────────────────────────────
-const agentCwd = path.join(os.homedir(), '.autory');
-fs.mkdirSync(agentCwd, { recursive: true });
+// ── 确保默认工作目录存在 ─────────────────────────────────────────
+const defaultAgentCwd = path.join(os.homedir(), '.autory');
+fs.mkdirSync(defaultAgentCwd, { recursive: true });
 
 // ── 初始化适配器 ────────────────────────────────────────────────
 const httpAdapter = new HttpAdapter();
@@ -39,16 +39,30 @@ const activeAdapters = [httpAdapter];
 
 const mcpServers = buildMcpRegistry(activeAdapters, config.anthropic.extraMcpServers);
 
-// ── 初始化 Agent ────────────────────────────────────────────────
-const agent = new AgentCore({
-  ...(config.anthropic.model ? { model: config.anthropic.model } : {}),
-  ...(config.anthropic.appendSystemPrompt ? { appendSystemPrompt: config.anthropic.appendSystemPrompt } : {}),
-  cwd: agentCwd,
-  ...(config.anthropic.allowedTools ? { allowedTools: config.anthropic.allowedTools } : {}),
-  ...(config.anthropic.guestPermissionMode ? { guestPermissionMode: config.anthropic.guestPermissionMode } : {}),
-  persistSession: true,
-  mcpServers,
-});
+// ── 按 cwd 缓存 AgentCore 实例 ──────────────────────────────────
+function expandHome(cwd: string): string {
+  if (cwd === '~') return os.homedir();
+  if (cwd.startsWith('~/')) return path.join(os.homedir(), cwd.slice(2));
+  return cwd;
+}
+
+
+const agentCache = new Map<string, AgentCore>();
+
+function getAgent(cwd: string): AgentCore {
+  if (!agentCache.has(cwd)) {
+    agentCache.set(cwd, new AgentCore({
+      ...(config.anthropic.model ? { model: config.anthropic.model } : {}),
+      ...(config.anthropic.appendSystemPrompt ? { appendSystemPrompt: config.anthropic.appendSystemPrompt } : {}),
+      cwd,
+      ...(config.anthropic.allowedTools ? { allowedTools: config.anthropic.allowedTools } : {}),
+      ...(config.anthropic.guestPermissionMode ? { guestPermissionMode: config.anthropic.guestPermissionMode } : {}),
+      persistSession: true,
+      mcpServers,
+    }));
+  }
+  return agentCache.get(cwd)!;
+}
 
 // ── 角色解析 ────────────────────────────────────────────────────
 function resolveRole(userId: string): UserRole {
@@ -83,6 +97,9 @@ const server = Bun.serve<WsData>({
   },
 
   websocket: {
+    idleTimeout: 120,
+    sendPings: true,
+
     open(ws) {
       logger.info('WS connected', { connectionId: ws.data.connectionId });
     },
@@ -114,6 +131,11 @@ const server = Bun.serve<WsData>({
 
       logger.info('WS message received', { sessionId: msg.sessionId, userId: msg.userId, content: msg.content.slice(0, 80) });
 
+      const rawCwd = msg.metadata?.cwd as string | undefined;
+      const resolvedCwd = expandHome(rawCwd ?? '~/.autory');
+      fs.mkdirSync(resolvedCwd, { recursive: true });
+      const agent = getAgent(resolvedCwd);
+
       try {
         for await (const event of agent.processMessageStream(msg, abortController)) {
           const { type, subtype } = event as { type: string; subtype?: string };
@@ -131,14 +153,6 @@ const server = Bun.serve<WsData>({
             continue;
           }
 
-          if (event.type === 'result') {
-            // SDK 分配的真实 session_id 可能与我们传入的不同（新建 session 时）
-            const realSessionId = (event as Record<string, unknown>)['session_id'] as string | undefined;
-            if (realSessionId && realSessionId !== msg.sessionId) {
-              logger.info('Session ready', { clientSessionId: msg.sessionId, realSessionId });
-              ws.send(JSON.stringify({ type: 'session_ready', sessionId: realSessionId }));
-            }
-          }
 
           if (
             event.type === 'assistant'
@@ -146,6 +160,12 @@ const server = Bun.serve<WsData>({
             || event.type === 'tool_progress'
             || event.type === 'tool_use_summary'
           ) {
+            // result 是 SDK 最后一个事件；在发送给客户端之前先移除 abort controller，
+            // 防止客户端收到 result 后立即关闭 WebSocket 触发 close handler 中的 abort，
+            // 导致 SDK 子进程被杀死、无法将对话内容写入 session 文件。
+            if (event.type === 'result') {
+              ws.data.activeAborts.delete(msg.sessionId);
+            }
             ws.send(JSON.stringify({ type: event.type, sessionId: msg.sessionId, event }));
           }
         }
@@ -167,7 +187,7 @@ const server = Bun.serve<WsData>({
   },
 });
 
-logger.info('Server running', { port: server.port, cwd: agentCwd });
+logger.info('Server running', { port: server.port, defaultCwd: defaultAgentCwd });
 logger.info('Adapters initialized', { http: true, ws: true });
 
 // 优雅关闭：等待已有请求完成后退出

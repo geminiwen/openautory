@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { CheckOutlined, FolderAddOutlined, FolderOutlined, UpOutlined } from '@ant-design/icons';
 import { Bubble, Sender } from '@ant-design/x';
+import { Dropdown } from 'antd';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type { Components } from 'react-markdown';
-import { getServerUrl } from './Settings';
+import type { ProjectInfo } from './Sidebar';
 import styles from './Chat.module.css';
 
 const markdownComponents: Components = {
@@ -74,7 +76,7 @@ interface AiMessage {
   loading?: boolean;
 }
 
-type Message = UserMessage | AiMessage;
+export type Message = UserMessage | AiMessage;
 
 interface AssistantTextBlock {
   type: 'text';
@@ -139,7 +141,6 @@ let msgCounter = 0;
 const nextKey = () => String(++msgCounter);
 
 const USER_ID = 'desktop-user';
-const SESSION_CWD = '~/.autory';
 
 function normalizeText(value: string): string {
   return value.trim().replace(/\s+/g, ' ');
@@ -317,26 +318,47 @@ function historyToMessages(history: HistoryMsg[]): Message[] {
 }
 
 export interface ChatProps {
+  cwd: string;
   sessionId: string | null; // null = new thread
-  onSessionReady: (realId: string) => void;
+  projectName: string;
+  projects: ProjectInfo[];
+  messages: Message[];
+  loading: boolean;
+  onUpdateMessages: (sessionId: string, updater: (prev: Message[]) => Message[]) => void;
+  onUpdateLoading: (sessionId: string, loading: boolean) => void;
+  wsSend: (data: unknown) => void;
+  wsSubscribe: (listener: (payload: ServerPayload) => void) => () => void;
+  onNewSession?: (sessionId: string, preview: string) => void;
+  onSwitchProject?: (cwd: string) => void;
+  onAddProject?: () => void;
 }
 
-export default function Chat({ sessionId: propSessionId, onSessionReady }: ChatProps) {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [loading, setLoading] = useState(false);
+export default function Chat({ cwd, sessionId: propSessionId, projectName, projects, messages, loading, onUpdateMessages, onUpdateLoading, wsSend, wsSubscribe, onNewSession, onSwitchProject, onAddProject }: ChatProps) {
   const [inputValue, setInputValue] = useState('');
-  const wsRef = useRef<WebSocket | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
 
   // Tracks the real session ID — may start as propSessionId and get updated
   // after session_ready. Using a ref so WS callbacks always see the latest value.
   const actualSessionIdRef = useRef<string>(propSessionId ?? '');
 
+  // Scoped setters: write to the App-level session state map
+  const setMessages = useCallback((updater: Message[] | ((prev: Message[]) => Message[])) => {
+    const sid = actualSessionIdRef.current;
+    if (!sid) return;
+    onUpdateMessages(sid, typeof updater === 'function' ? updater : () => updater);
+  }, [onUpdateMessages]);
+
+  const setLoading = useCallback((value: boolean) => {
+    const sid = actualSessionIdRef.current;
+    if (!sid) return;
+    onUpdateLoading(sid, value);
+  }, [onUpdateLoading]);
+
   const loadHistory = useCallback((sid: string) => {
-    invoke<HistoryMsg[]>('read_session_messages', { sessionId: sid, cwd: SESSION_CWD }).then((history) => {
+    invoke<HistoryMsg[]>('read_session_messages', { sessionId: sid, cwd }).then((history) => {
       setMessages(historyToMessages(history));
     });
-  }, []);
+  }, [setMessages, cwd]);
 
   // On mount: load history if we have an existing session
   useEffect(() => {
@@ -346,15 +368,6 @@ export default function Chat({ sessionId: propSessionId, onSessionReady }: ChatP
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // intentionally only runs on mount (Chat is remounted via key)
-
-  const closeSocket = useCallback(() => {
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
-    }
-  }, []);
-
-  useEffect(() => () => closeSocket(), [closeSocket]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: 'end' });
@@ -373,7 +386,7 @@ export default function Chat({ sessionId: propSessionId, onSessionReady }: ChatP
       };
       return next;
     });
-  }, []);
+  }, [setMessages]);
 
   const appendToolProgressPayload = useCallback((key: string, payload: ToolProgressEventPayload) => {
     const roundedSeconds = Math.max(1, Math.round(payload.elapsed_time_seconds));
@@ -389,7 +402,7 @@ export default function Chat({ sessionId: propSessionId, onSessionReady }: ChatP
       };
       return next;
     });
-  }, []);
+  }, [setMessages]);
 
   const appendToolSummaryPayload = useCallback((key: string, payload: ToolUseSummaryEventPayload) => {
     setMessages((prev) => {
@@ -403,126 +416,144 @@ export default function Chat({ sessionId: propSessionId, onSessionReady }: ChatP
       };
       return next;
     });
-  }, []);
+  }, [setMessages]);
 
   const finishRequest = useCallback(() => {
     setLoading(false);
-    closeSocket();
-  }, [closeSocket]);
+  }, [setLoading]);
 
   const handleCancel = useCallback(() => {
     const sid = actualSessionIdRef.current;
     if (!sid) return;
-    wsRef.current?.send(JSON.stringify({ type: 'cancel', sessionId: sid }));
-  }, []);
+    wsSend({ type: 'cancel', sessionId: sid });
+  }, [wsSend]);
 
-  const handleSubmit = useCallback((rawText: string) => {
-    const text = rawText.trim();
-    if (!text || loading) return;
-    setInputValue('');
+  // Track the current AI message key so the subscription listener can update the right bubble
+  const aiKeyRef = useRef<string | null>(null);
 
-    const userKey = nextKey();
-    const aiKey = nextKey();
+  // Subscribe to incoming WebSocket messages, filter by current session
+  useEffect(() => {
+    const unsubscribe = wsSubscribe((payload) => {
+      const currentAiKey = aiKeyRef.current;
+      // Only process messages for our session
+      if (payload.sessionId && payload.sessionId !== actualSessionIdRef.current) return;
 
-    setMessages((prev) => [
-      ...prev,
-      { key: userKey, role: 'user', content: text },
-      { key: aiKey, role: 'ai', blocks: [], loading: true },
-    ]);
-    setLoading(true);
-
-    const ws = new WebSocket(getServerUrl());
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      ws.send(JSON.stringify({
-        type: 'message',
-        sessionId: actualSessionIdRef.current,
-        userId: USER_ID,
-        content: text,
-      }));
-    };
-
-    ws.onmessage = (event: MessageEvent<string>) => {
-      let payload: ServerPayload;
-      try {
-        payload = JSON.parse(event.data) as ServerPayload;
-      } catch {
+      if (payload.type === 'assistant' && payload.event && currentAiKey) {
+        appendAssistantPayload(currentAiKey, payload.event as AssistantEventPayload);
         return;
       }
-
-      if (payload.type === 'assistant' && payload.event) {
-        appendAssistantPayload(aiKey, payload.event as AssistantEventPayload);
+      if (payload.type === 'tool_progress' && payload.event && currentAiKey) {
+        appendToolProgressPayload(currentAiKey, payload.event as ToolProgressEventPayload);
         return;
       }
-      if (payload.type === 'tool_progress' && payload.event) {
-        appendToolProgressPayload(aiKey, payload.event as ToolProgressEventPayload);
-        return;
-      }
-      if (payload.type === 'tool_use_summary' && payload.event) {
-        appendToolSummaryPayload(aiKey, payload.event as ToolUseSummaryEventPayload);
-        return;
-      }
-      if (payload.type === 'session_ready' && payload.sessionId) {
-        const realId = payload.sessionId;
-        actualSessionIdRef.current = realId;
-        onSessionReady(realId);
+      if (payload.type === 'tool_use_summary' && payload.event && currentAiKey) {
+        appendToolSummaryPayload(currentAiKey, payload.event as ToolUseSummaryEventPayload);
         return;
       }
       if (payload.type === 'compact_boundary') {
         loadHistory(actualSessionIdRef.current);
         return;
       }
-      if (payload.type === 'result') {
+      if (payload.type === 'result' && currentAiKey) {
         setMessages((prev) =>
-          prev.map((m) => (m.key === aiKey && m.role === 'ai' ? { ...m, loading: false } : m)),
+          prev.map((m) => (m.key === currentAiKey && m.role === 'ai' ? { ...m, loading: false } : m)),
         );
+        aiKeyRef.current = null;
         finishRequest();
         return;
       }
-      if (payload.type === 'cancelled') {
+      if (payload.type === 'cancelled' && currentAiKey) {
         setMessages((prev) =>
-          prev.map((m) => (m.key === aiKey && m.role === 'ai' ? { ...m, loading: false } : m)),
+          prev.map((m) => (m.key === currentAiKey && m.role === 'ai' ? { ...m, loading: false } : m)),
         );
+        aiKeyRef.current = null;
         finishRequest();
         return;
       }
-      if (payload.type === 'error') {
+      if (payload.type === 'error' && currentAiKey) {
         const errorMessage = payload.message ?? 'Unknown error';
         setMessages((prev) =>
           prev.map((m) =>
-            m.key === aiKey && m.role === 'ai'
+            m.key === currentAiKey && m.role === 'ai'
               ? { ...m, blocks: [{ type: 'text' as const, key: nextKey(), text: `Error: ${errorMessage}` }], loading: false }
               : m,
           ),
         );
+        aiKeyRef.current = null;
         finishRequest();
       }
-    };
+    });
+    return unsubscribe;
+  }, [wsSubscribe, appendAssistantPayload, appendToolProgressPayload, appendToolSummaryPayload, finishRequest, loadHistory]);
 
-    ws.onerror = () => {
-      const url = getServerUrl();
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.key === aiKey && m.role === 'ai'
-            ? { ...m, blocks: [{ type: 'text' as const, key: nextKey(), text: `Cannot connect to ${url}` }], loading: false }
-            : m,
-        ),
-      );
-      finishRequest();
-    };
+  const handleSubmit = useCallback(async (rawText: string) => {
+    const text = rawText.trim();
+    if (!text || loading) return;
+    setInputValue('');
+    setLoading(true);
 
-    ws.onclose = () => { wsRef.current = null; };
-  }, [appendAssistantPayload, appendToolProgressPayload, appendToolSummaryPayload, finishRequest, loadHistory, loading, onSessionReady]);
+    // 新 session：先生成 UUID，确保后续 setMessages 能写入正确的 map key
+    if (!actualSessionIdRef.current) {
+      const newId = crypto.randomUUID();
+      actualSessionIdRef.current = newId;
+      await invoke('create_session', { sessionId: newId, cwd });
+      onNewSession?.(newId, text);
+    }
+
+    const userKey = nextKey();
+    const aiKey = nextKey();
+    aiKeyRef.current = aiKey;
+
+    setMessages((prev) => [
+      ...prev,
+      { key: userKey, role: 'user', content: text },
+      { key: aiKey, role: 'ai', blocks: [], loading: true },
+    ]);
+
+    wsSend({
+      type: 'message',
+      sessionId: actualSessionIdRef.current,
+      userId: USER_ID,
+      content: text,
+      cwd,
+    });
+  }, [wsSend, setMessages, loading, cwd, onNewSession]);
 
   return (
     <div className={styles.surface}>
       <div className={styles.stream}>
         {messages.length === 0 ? (
           <section className={styles.empty}>
-            <p className={styles.emptyKicker}>OpenAutory Assistant</p>
-            <h2 className={styles.emptyTitle}>Ask for architecture, code, or delivery help.</h2>
-            <p className={styles.emptyCopy}>Choose a prompt or write your own request below.</p>
+            <p className={styles.emptyKicker}>OpenAutory</p>
+            <h2 className={styles.emptyTitle}>
+              <span>开始构建</span>
+              <br />
+              <Dropdown
+                trigger={['click']}
+                menu={{
+                  items: [
+                    { key: '_header', label: '选择你的项目', disabled: true, style: { color: 'rgba(29,37,48,0.4)', fontSize: 12, cursor: 'default' } },
+                    ...projects.map((p) => ({
+                      key: p.cwd,
+                      icon: <FolderOutlined />,
+                      label: (
+                        <span className={styles.projectMenuItem}>
+                          <span>{p.name}</span>
+                          {p.cwd === cwd && <CheckOutlined style={{ fontSize: 12, color: 'var(--oa-accent, #0f766e)' }} />}
+                        </span>
+                      ),
+                      onClick: () => onSwitchProject?.(p.cwd),
+                    })),
+                    { type: 'divider' as const },
+                    { key: '_add', icon: <FolderAddOutlined />, label: '添加新项目', onClick: () => onAddProject?.() },
+                  ],
+                }}
+              >
+                <span className={styles.projectPicker}>
+                  {projectName} <UpOutlined className={styles.projectPickerIcon} />
+                </span>
+              </Dropdown>
+            </h2>
             <div className={styles.promptGrid}>
               {STARTER_PROMPTS.map((prompt) => (
                 <button

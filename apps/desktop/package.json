@@ -9,6 +9,8 @@
     "build:server": "TRIPLE=$(rustc -vV | sed -n 's/host: //p') && bun build --compile ../server/src/index.ts --outfile src-tauri/binaries/server-$TRIPLE",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "tauri:build": "bun run build:server && tauri build --config '{\"bundle\":{\"externalBin\":[\"binaries/server\"]}}'"
   },
   "dependencies": {
@@ -26,8 +28,13 @@
     "@tauri-apps/api": "^2",
     "@tauri-apps/cli": "^2",
     "@tauri-apps/plugin-log": "^2",
+    "@tauri-apps/plugin-opener": "^2.5.3",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/react-hooks": "^8.0.1",
     "@vitejs/plugin-react": "^4",
+    "jsdom": "^28.1.0",
     "typescript": "^5.7",
-    "vite": "^6"
+    "vite": "^6",
+    "vitest": "^4.0.18"
   }
 }

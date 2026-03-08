@@ -6,6 +6,7 @@ interface WsMessage {
   sessionId?: string;
   userId?: string;
   content: string;
+  cwd?: string;
 }
 
 export class HttpAdapter implements ChannelAdapter {
@@ -43,7 +44,7 @@ export class HttpAdapter implements ChannelAdapter {
       channel: 'ws',
       content: parsed.content.trim(),
       timestamp: Date.now(),
-      metadata: { connectionId },
+      metadata: { connectionId, ...(parsed.cwd ? { cwd: parsed.cwd } : {}) },
     };
   }
 }
