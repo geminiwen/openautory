@@ -16,7 +16,7 @@
   overflow-y: auto;
   overflow-x: hidden;
   padding: 12px 12px 8px;
-  scrollbar-gutter: stable;
+  scrollbar-width: none;
 }
 
 .empty {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import {
   CloseOutlined,
   FullscreenExitOutlined,
@@ -57,6 +57,8 @@ export default function App() {
   const [activeCwd, setActiveCwd] = useState(DEFAULT_CWD);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [chatKey, setChatKey] = useState(0);
+  const [chatExiting, setChatExiting] = useState(false);
+  const pendingSwitch = useRef<(() => void) | null>(null);
 
   // Session state: keyed by session ID, survives Chat remounts
   const [sessionsMessages, setSessionsMessages] = useState<Record<string, Message[]>>({});
@@ -233,23 +235,43 @@ export default function App() {
     return p?.name ?? activeCwd;
   }, [projects, activeCwd]);
 
+  const switchWithTransition = useCallback((apply: () => void) => {
+    if (chatExiting) return;
+    pendingSwitch.current = () => {
+      apply();
+      setChatKey((k) => k + 1);
+    };
+    setChatExiting(true);
+  }, [chatExiting]);
+
+  const handleChatAnimationEnd = useCallback(() => {
+    if (chatExiting && pendingSwitch.current) {
+      pendingSwitch.current();
+      pendingSwitch.current = null;
+      setChatExiting(false);
+    }
+  }, [chatExiting]);
+
   const handleNewThread = useCallback((cwd: string) => {
-    setActiveCwd(cwd);
-    setSelectedSessionId(null);
-    setChatKey((k) => k + 1);
-  }, []);
+    switchWithTransition(() => {
+      setActiveCwd(cwd);
+      setSelectedSessionId(null);
+    });
+  }, [switchWithTransition]);
 
   const handleSwitchProject = useCallback((cwd: string) => {
-    setActiveCwd(cwd);
-    setSelectedSessionId(null);
-    setChatKey((k) => k + 1);
-  }, []);
+    switchWithTransition(() => {
+      setActiveCwd(cwd);
+      setSelectedSessionId(null);
+    });
+  }, [switchWithTransition]);
 
   const handleSelectSession = useCallback((cwd: string, sessionId: string) => {
-    setActiveCwd(cwd);
-    setSelectedSessionId(sessionId);
-    setChatKey((k) => k + 1);
-  }, []);
+    switchWithTransition(() => {
+      setActiveCwd(cwd);
+      setSelectedSessionId(sessionId);
+    });
+  }, [switchWithTransition]);
 
   // 新 session 第一条消息时：前端已生成 sessionId，立刻插入侧边栏
   // session ID 由 desktop 生成并管理，SDK 以此 UUID 创建 session 文件，无需 ID 交换
@@ -270,10 +292,11 @@ export default function App() {
     if (!folderPath) return;
     const list = await invoke<ProjectInfo[]>('add_project', { cwd: folderPath });
     setProjects(list);
-    setActiveCwd(folderPath);
-    setSelectedSessionId(null);
-    setChatKey((k) => k + 1);
-  }, []);
+    switchWithTransition(() => {
+      setActiveCwd(folderPath);
+      setSelectedSessionId(null);
+    });
+  }, [switchWithTransition]);
 
   const handleDeleteSession = useCallback(
     async (cwd: string, sessionId: string) => {
@@ -286,11 +309,12 @@ export default function App() {
         return next;
       });
       if (selectedSessionId === sessionId) {
-        setSelectedSessionId(null);
-        setChatKey((k) => k + 1);
+        switchWithTransition(() => {
+          setSelectedSessionId(null);
+        });
       }
     },
-    [selectedSessionId],
+    [selectedSessionId, switchWithTransition],
   );
 
   const handleRemoveProject = useCallback(
@@ -298,13 +322,14 @@ export default function App() {
       const list = await invoke<ProjectInfo[]>('remove_project', { cwd });
       setProjects(list);
       if (activeCwd === cwd) {
-        setActiveCwd(DEFAULT_CWD);
         const defaultProject = list.find((p) => p.cwd === DEFAULT_CWD);
-        setSelectedSessionId(defaultProject?.sessions[0]?.id ?? null);
-        setChatKey((k) => k + 1);
+        switchWithTransition(() => {
+          setActiveCwd(DEFAULT_CWD);
+          setSelectedSessionId(defaultProject?.sessions[0]?.id ?? null);
+        });
       }
     },
-    [activeCwd],
+    [activeCwd, switchWithTransition],
   );
 
   const handleTitlebarMouseDown = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
@@ -410,7 +435,10 @@ export default function App() {
               onRemoveProject={handleRemoveProject}
               onDeleteSession={handleDeleteSession}
             />
-            <div className={styles.chatArea}>
+            <div
+              className={`${styles.chatArea} ${chatExiting ? styles.chatExit : styles.chatEnter}`}
+              onAnimationEnd={handleChatAnimationEnd}
+            >
               <Chat
                 key={chatKey}
                 cwd={activeCwd}
