@@ -11,6 +11,8 @@
     "apps/desktop"
   ],
   "scripts": {
+    "kill:3000": "sh -c 'pids=$(lsof -ti tcp:3000); if [ -n \"$pids\" ]; then kill -9 $pids; fi'",
+    "dev:clean": "bun run kill:3000 && bun run dev",
     "dev": "bun run --filter @openautory/desktop tauri:dev",
     "build": "bun run --filter @openautory/desktop tauri:build"
   },

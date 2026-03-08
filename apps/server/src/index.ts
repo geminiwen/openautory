@@ -13,6 +13,18 @@ interface WsData {
   activeAborts: Map<string, AbortController>;
 }
 
+interface HotReloadState {
+  stopServer?: () => void;
+  removeSignalHandlers?: () => void;
+}
+
+const hotReloadState = (globalThis as typeof globalThis & { __openautoryHotReloadState?: HotReloadState }).__openautoryHotReloadState
+  ?? ((globalThis as typeof globalThis & { __openautoryHotReloadState?: HotReloadState }).__openautoryHotReloadState = {});
+
+// bun --hot 会重跑模块；先清理上一次实例，避免端口残留。
+hotReloadState.removeSignalHandlers?.();
+hotReloadState.stopServer?.();
+
 const logger = createLogger('server', { level: config.log.level, logDir: config.log.logDir });
 
 // ── 确保工作目录存在 ─────────────────────────────────────────────
@@ -165,5 +177,29 @@ function shutdown(signal: string) {
   process.exit(0);
 }
 
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
+const onSigTerm = () => shutdown('SIGTERM');
+const onSigInt = () => shutdown('SIGINT');
+
+process.on('SIGTERM', onSigTerm);
+process.on('SIGINT', onSigInt);
+
+const cleanup = () => {
+  process.off('SIGTERM', onSigTerm);
+  process.off('SIGINT', onSigInt);
+  server.stop(true);
+};
+
+hotReloadState.removeSignalHandlers = () => {
+  process.off('SIGTERM', onSigTerm);
+  process.off('SIGINT', onSigInt);
+};
+hotReloadState.stopServer = () => {
+  server.stop(true);
+};
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    logger.info('Hot reload dispose, stopping previous server instance');
+    cleanup();
+  });
+}

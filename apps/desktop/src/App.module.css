@@ -132,9 +132,21 @@
   position: relative;
   flex: 1;
   min-height: 0;
-  overflow: hidden;
-  padding: 2px 12px 8px;
+  overflow: visible;
+  padding: 0 0 8px 4px;
   background: transparent;
+  display: flex;
+  gap: 8px;
+}
+
+.chatArea {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: 2px 12px 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .settingsDrawer :global(.ant-drawer-content) {
@@ -168,6 +180,10 @@
   }
 
   .content:global(.ant-layout-content) {
+    padding: 0;
+  }
+
+  .chatArea {
     padding: 8px 14px 14px;
   }
 

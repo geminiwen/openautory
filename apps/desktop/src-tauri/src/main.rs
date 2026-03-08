@@ -5,37 +5,43 @@ use std::sync::Mutex;
 use tauri::{Manager, RunEvent};
 use tauri_plugin_log::{Target, TargetKind};
 
-/// 恢复或新建 session：
-/// - 若 ~/.claude/projects/<encoded-cwd>/ 下存在 .jsonl 文件，返回最近修改的那个的 UUID；
-/// - 否则创建新文件并返回新 UUID。
-/// cwd 由前端传入（支持 ~ 展开，如 "~/.autory"）。
-#[tauri::command]
-fn get_or_create_session(cwd: String) -> Result<String, String> {
-    // 展开 ~
-    let expanded_cwd: PathBuf = if cwd.starts_with("~/") || cwd == "~" {
+// ── helpers ──────────────────────────────────────────────────────────────────
+
+fn expand_home(cwd: &str) -> Result<PathBuf, String> {
+    if cwd.starts_with("~/") || cwd == "~" {
         let home = std::env::var("HOME")
             .map(PathBuf::from)
             .map_err(|_| "Cannot determine home directory".to_string())?;
-        if cwd == "~" { home } else { home.join(&cwd[2..]) }
+        if cwd == "~" { Ok(home) } else { Ok(home.join(&cwd[2..])) }
     } else {
-        PathBuf::from(&cwd)
-    };
+        Ok(PathBuf::from(cwd))
+    }
+}
 
-    // 编码：将路径中的 / 和 . 替换为 -（与 Claude Code 保持一致）
-    let encoded = expanded_cwd
+fn session_dir(cwd: &str) -> Result<PathBuf, String> {
+    let expanded = expand_home(cwd)?;
+    let encoded = expanded
         .to_str()
         .ok_or("Invalid cwd path")?
         .replace(['/', '.'], "-");
-
-    // 构造目录 ~/.claude/projects/<encoded>/
     let home = std::env::var("HOME")
         .map(PathBuf::from)
         .map_err(|_| "Cannot determine home directory".to_string())?;
-    let dir = home.join(".claude").join("projects").join(&encoded);
+    Ok(home.join(".claude").join("projects").join(encoded))
+}
+
+// ── commands ──────────────────────────────────────────────────────────────────
+
+/// 恢复或新建 session：
+/// - 若 ~/.claude/projects/<encoded-cwd>/ 下存在 .jsonl 文件，返回最近修改的那个的 UUID；
+/// - 否则返回空字符串——由服务端首条消息触发 SDK 建立新 session。
+/// cwd 由前端传入（支持 ~ 展开，如 "~/.autory"）。
+#[tauri::command]
+fn get_or_create_session(cwd: String) -> Result<String, String> {
+    let dir = session_dir(&cwd)?;
     std::fs::create_dir_all(&dir)
         .map_err(|e| format!("Cannot create session directory: {e}"))?;
 
-    // 查找最近修改的、有真实对话数据的 .jsonl 文件（> 300 字节，排除仅含 snapshot 的 stub）
     let latest = std::fs::read_dir(&dir)
         .map_err(|e| format!("Cannot read session directory: {e}"))?
         .filter_map(|entry| {
@@ -43,7 +49,7 @@ fn get_or_create_session(cwd: String) -> Result<String, String> {
             let path = entry.path();
             if path.extension()?.to_str()? != "jsonl" { return None; }
             let metadata = entry.metadata().ok()?;
-            if metadata.len() <= 300 { return None; } // 跳过 stub 文件
+            if metadata.len() <= 300 { return None; }
             let modified = metadata.modified().ok()?;
             Some((modified, path))
         })
@@ -59,40 +65,78 @@ fn get_or_create_session(cwd: String) -> Result<String, String> {
         return Ok(session_id);
     }
 
-    // 无真实 session，返回空字符串——由服务端首条消息触发 SDK 建立新 session
     log::info!("No existing session found, starting fresh (cwd={cwd})");
     Ok(String::new())
 }
 
+/// Session 摘要，用于侧边栏列表。
+#[derive(serde::Serialize)]
+struct SessionInfo {
+    id: String,
+    modified: i64,   // Unix ms
+    preview: String, // 第一条 user 消息，截取 80 字符
+}
+
+/// 列出指定 cwd 下所有有效 session，按修改时间降序排列。
+#[tauri::command]
+fn list_sessions(cwd: String) -> Result<Vec<SessionInfo>, String> {
+    let dir = session_dir(&cwd)?;
+    if !dir.exists() {
+        return Ok(vec![]);
+    }
+
+    let mut sessions: Vec<SessionInfo> = std::fs::read_dir(&dir)
+        .map_err(|e| format!("Cannot read session directory: {e}"))?
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            if path.extension()?.to_str()? != "jsonl" { return None; }
+            let metadata = entry.metadata().ok()?;
+            if metadata.len() <= 300 { return None; }
+
+            let id = path.file_stem()?.to_str()?.to_string();
+            let modified = metadata.modified().ok()?;
+            let modified_ms = modified
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()?
+                .as_millis() as i64;
+
+            // 读取第一条非 slash-command 的 user 消息作为 preview
+            let content = std::fs::read(&path).ok()?;
+            let preview = content
+                .split(|&b| b == b'\n')
+                .filter(|line| !line.is_empty())
+                .find_map(|line| {
+                    let d: serde_json::Value = serde_json::from_slice(line).ok()?;
+                    if d.get("type")?.as_str()? != "user" { return None; }
+                    if d.get("isSidechain").and_then(|v| v.as_bool()).unwrap_or(false) {
+                        return None;
+                    }
+                    let content_arr = d.get("message")?.get("content")?.as_array()?;
+                    content_arr.iter().find_map(|b| {
+                        if b.get("type")?.as_str()? != "text" { return None; }
+                        let text = b.get("text")?.as_str()?;
+                        if text.is_empty() || text.starts_with('/') { return None; }
+                        Some(text.chars().take(80).collect::<String>())
+                    })
+                })
+                .unwrap_or_default();
+
+            Some(SessionInfo { id, modified: modified_ms, preview })
+        })
+        .collect();
+
+    sessions.sort_by(|a, b| b.modified.cmp(&a.modified));
+    Ok(sessions)
+}
+
 /// 从 session .jsonl 文件中解析对话历史，返回 [{role, text}] 列表。
-/// 从 session .jsonl 解析主链对话，返回结构化消息列表。
 /// user:      { role: "user", text: "..." }
 /// assistant: { role: "assistant", blocks: [ { type: "thinking"|"text"|"tool_use", ... } ] }
 #[tauri::command]
 fn read_session_messages(session_id: String, cwd: String) -> Result<Vec<serde_json::Value>, String> {
-    // 展开 ~
-    let expanded_cwd: PathBuf = if cwd.starts_with("~/") || cwd == "~" {
-        let home = std::env::var("HOME")
-            .map(PathBuf::from)
-            .map_err(|_| "Cannot determine home directory".to_string())?;
-        if cwd == "~" { home } else { home.join(&cwd[2..]) }
-    } else {
-        PathBuf::from(&cwd)
-    };
-
-    let encoded = expanded_cwd
-        .to_str()
-        .ok_or("Invalid cwd")?
-        .replace(['/', '.'], "-");
-
-    let home = std::env::var("HOME")
-        .map(PathBuf::from)
-        .map_err(|_| "Cannot determine home directory".to_string())?;
-    let file = home
-        .join(".claude")
-        .join("projects")
-        .join(&encoded)
-        .join(format!("{session_id}.jsonl"));
+    let dir = session_dir(&cwd)?;
+    let file = dir.join(format!("{session_id}.jsonl"));
 
     if !file.exists() {
         return Ok(vec![]);
@@ -126,20 +170,17 @@ fn read_session_messages(session_id: String, cwd: String) -> Result<Vec<serde_js
         };
 
         if t == "user" {
-            // 只取第一个 text block（跳过 tool_result）
             let text = content_arr.iter().find_map(|b| {
                 if b.get("type")?.as_str()? == "text" {
                     b.get("text")?.as_str().map(|s| s.to_string())
                 } else { None }
             });
             if let Some(text) = text {
-                // 跳过 slash command（如 /compact）
                 if !text.is_empty() && !text.starts_with('/') {
                     messages.push(serde_json::json!({ "role": "user", "text": text }));
                 }
             }
         } else {
-            // assistant：保留 thinking / text / tool_use block
             let mut blocks = Vec::new();
             for b in content_arr {
                 match b.get("type").and_then(|v| v.as_str()) {
@@ -151,7 +192,6 @@ fn read_session_messages(session_id: String, cwd: String) -> Result<Vec<serde_js
                     }
                     Some("text") => {
                         let text = b.get("text").and_then(|v| v.as_str()).unwrap_or("");
-                        // 跳过 slash command 的内部回复
                         if !text.is_empty() && text != "No response requested." {
                             blocks.push(serde_json::json!({ "type": "text", "text": text }));
                         }
@@ -179,6 +219,8 @@ fn read_session_messages(session_id: String, cwd: String) -> Result<Vec<serde_js
     Ok(messages)
 }
 
+// ── server process management ─────────────────────────────────────────────────
+
 #[cfg(not(debug_assertions))]
 use tauri_plugin_shell::ShellExt;
 
@@ -193,7 +235,6 @@ impl ServerHandle {
     fn kill(self) {
         match self {
             Self::Dev(mut child) => {
-                // Unix：先发 SIGTERM，等待最多 3s，超时再 SIGKILL
                 #[cfg(unix)]
                 {
                     let pid = child.id();
@@ -236,7 +277,11 @@ fn main() {
                 .build(),
         )
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![get_or_create_session, read_session_messages])
+        .invoke_handler(tauri::generate_handler![
+            get_or_create_session,
+            list_sessions,
+            read_session_messages,
+        ])
         .setup(|app| {
             // Ctrl+C → app_handle.exit(0) → RunEvent::Exit → cleanup
             {
@@ -250,20 +295,19 @@ fn main() {
 
             #[cfg(debug_assertions)]
             {
-                // Dev 模式：直接用系统 bun --hot，支持热重载
                 let server_dir = std::path::PathBuf::from(concat!(
                     env!("CARGO_MANIFEST_DIR"),
                     "/../../../apps/server"
                 ));
                 match std::process::Command::new("bun")
-                    .args(["run", "--hot", "src/index.ts"])
+                    .args(["run", "--watch", "src/index.ts"])
                     .current_dir(&server_dir)
                     .env("LOG_DIR", "/tmp")
                     .env("LOG_LEVEL", "info")
                     .spawn()
                 {
                     Ok(child) => {
-                        log::info!("Server started in dev mode (bun --hot)");
+                        log::info!("Server started in dev mode (bun --watch)");
                         app.manage(ServerProcess(Mutex::new(Some(ServerHandle::Dev(child)))));
                     }
                     Err(e) => {
@@ -275,7 +319,6 @@ fn main() {
 
             #[cfg(not(debug_assertions))]
             {
-                // Release 模式：使用编译好的 sidecar
                 let result = (|| -> Result<_, Box<dyn std::error::Error>> {
                     let cmd = app.shell().sidecar("server")?;
                     Ok(cmd.spawn()?)
@@ -303,7 +346,6 @@ fn main() {
         .expect("error while running tauri application")
         .run(|app_handle, event| {
             if let RunEvent::Exit = event {
-                // 用内层块让 state 和 MutexGuard 在 kill() 之前 drop
                 let handle = {
                     let state = app_handle.state::<ServerProcess>();
                     state.0.lock().ok().and_then(|mut g| g.take())

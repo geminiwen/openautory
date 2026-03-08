@@ -123,7 +123,8 @@ interface ToolUseSummaryEventPayload {
 }
 
 interface ServerPayload {
-  type: 'assistant' | 'result' | 'tool_progress' | 'tool_use_summary' | 'error' | 'session_init' | 'cancelled' | 'compact_boundary';
+  type: 'assistant' | 'result' | 'tool_progress' | 'tool_use_summary' | 'error' | 'session_init' | 'session_ready' | 'cancelled' | 'compact_boundary';
+  sessionId?: string;
   event?: AssistantEventPayload | ToolProgressEventPayload | ToolUseSummaryEventPayload;
   message?: string;
 }
@@ -315,14 +316,21 @@ function historyToMessages(history: HistoryMsg[]): Message[] {
   });
 }
 
-export default function Chat() {
-  // undefined = 初始化中（禁用输入）; null/string = 已就绪
-  const [sessionId, setSessionId] = useState<string | null | undefined>(undefined);
+export interface ChatProps {
+  sessionId: string | null; // null = new thread
+  onSessionReady: (realId: string) => void;
+}
+
+export default function Chat({ sessionId: propSessionId, onSessionReady }: ChatProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const wsRef = useRef<WebSocket | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
+
+  // Tracks the real session ID — may start as propSessionId and get updated
+  // after session_ready. Using a ref so WS callbacks always see the latest value.
+  const actualSessionIdRef = useRef<string>(propSessionId ?? '');
 
   const loadHistory = useCallback((sid: string) => {
     invoke<HistoryMsg[]>('read_session_messages', { sessionId: sid, cwd: SESSION_CWD }).then((history) => {
@@ -330,12 +338,14 @@ export default function Chat() {
     });
   }, []);
 
+  // On mount: load history if we have an existing session
   useEffect(() => {
-    invoke<string>('get_or_create_session', { cwd: SESSION_CWD }).then((id) => {
-      setSessionId(id);
-      if (id) loadHistory(id);
-    });
-  }, [loadHistory]);
+    if (propSessionId) {
+      actualSessionIdRef.current = propSessionId;
+      loadHistory(propSessionId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally only runs on mount (Chat is remounted via key)
 
   const closeSocket = useCallback(() => {
     if (wsRef.current) {
@@ -401,13 +411,14 @@ export default function Chat() {
   }, [closeSocket]);
 
   const handleCancel = useCallback(() => {
-    if (!sessionId) return;  // null 或 undefined 时不发 cancel
-    wsRef.current?.send(JSON.stringify({ type: 'cancel', sessionId }));
-  }, [sessionId]);
+    const sid = actualSessionIdRef.current;
+    if (!sid) return;
+    wsRef.current?.send(JSON.stringify({ type: 'cancel', sessionId: sid }));
+  }, []);
 
   const handleSubmit = useCallback((rawText: string) => {
     const text = rawText.trim();
-    if (!text || loading || sessionId === undefined) return;
+    if (!text || loading) return;
     setInputValue('');
 
     const userKey = nextKey();
@@ -424,7 +435,12 @@ export default function Chat() {
     wsRef.current = ws;
 
     ws.onopen = () => {
-      ws.send(JSON.stringify({ type: 'message', sessionId, userId: USER_ID, content: text }));
+      ws.send(JSON.stringify({
+        type: 'message',
+        sessionId: actualSessionIdRef.current,
+        userId: USER_ID,
+        content: text,
+      }));
     };
 
     ws.onmessage = (event: MessageEvent<string>) => {
@@ -447,13 +463,14 @@ export default function Chat() {
         appendToolSummaryPayload(aiKey, payload.event as ToolUseSummaryEventPayload);
         return;
       }
-      if (payload.type === 'session_ready') {
-        setSessionId(payload.sessionId as string);
+      if (payload.type === 'session_ready' && payload.sessionId) {
+        const realId = payload.sessionId;
+        actualSessionIdRef.current = realId;
+        onSessionReady(realId);
         return;
       }
       if (payload.type === 'compact_boundary') {
-        const sid = payload.sessionId as string;
-        loadHistory(sid);
+        loadHistory(actualSessionIdRef.current);
         return;
       }
       if (payload.type === 'result') {
@@ -496,7 +513,7 @@ export default function Chat() {
     };
 
     ws.onclose = () => { wsRef.current = null; };
-  }, [appendAssistantPayload, appendToolProgressPayload, appendToolSummaryPayload, finishRequest, loadHistory, loading, sessionId]);
+  }, [appendAssistantPayload, appendToolProgressPayload, appendToolSummaryPayload, finishRequest, loadHistory, loading, onSessionReady]);
 
   return (
     <div className={styles.surface}>
@@ -513,7 +530,7 @@ export default function Chat() {
                   type="button"
                   className={styles.promptChip}
                   onClick={() => handleSubmit(prompt)}
-                  disabled={loading || sessionId === undefined}
+                  disabled={loading}
                 >
                   {prompt}
                 </button>
@@ -638,8 +655,7 @@ export default function Chat() {
           onSubmit={handleSubmit}
           onCancel={handleCancel}
           loading={loading}
-          disabled={sessionId === undefined}
-          placeholder={sessionId === undefined ? 'Initializing session…' : 'Type your request and press Enter'}
+          placeholder="Type your request and press Enter"
           autoSize={{ minRows: 1, maxRows: 5 }}
         />
       </div>
