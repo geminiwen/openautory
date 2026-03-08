@@ -9,7 +9,20 @@ import {
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Button, ConfigProvider, Drawer, Layout } from 'antd';
-import Chat, { type Message } from './components/Chat';
+import Chat, {
+  type AiMessage,
+  type AssistantEventPayload,
+  type Message,
+  type ServerPayload,
+  type ToolProgressEventPayload,
+  type ToolUseSummaryEventPayload,
+  type UserEventPayload,
+  appendAssistantBlocks,
+  nextKey,
+  parseUserEvent,
+  updateBlockToolProgress,
+  updateBlockToolSummary,
+} from './components/Chat';
 import Sidebar, { type ProjectInfo } from './components/Sidebar';
 import { useWebSocket } from './hooks/useWebSocket';
 import { getServerUrl } from './components/Settings';
@@ -60,6 +73,131 @@ export default function App() {
     setSessionsLoading((prev) => ({ ...prev, [sessionId]: loading }));
   }, []);
 
+  // 全局 WS 事件订阅：即使 Chat 未挂载也能处理所有事件
+  useEffect(() => {
+    return wsSubscribe((payload: ServerPayload) => {
+      const sid = payload.sessionId;
+      if (!sid) return;
+
+      if (payload.type === 'assistant' && payload.event) {
+        setSessionsMessages((prev) => {
+          const msgs = prev[sid];
+          if (!msgs) return prev;
+          const idx = msgs.findIndex((m) => 'loading' in m && m.loading);
+          if (idx === -1) return prev;
+          const ai = msgs[idx] as AiMessage;
+          const updated = [...msgs];
+          updated[idx] = {
+            ...ai,
+            blocks: appendAssistantBlocks(ai.blocks, (payload.event as AssistantEventPayload).message?.content ?? []),
+          };
+          return { ...prev, [sid]: updated };
+        });
+        return;
+      }
+
+      if (payload.type === 'tool_progress' && payload.event) {
+        const ev = payload.event as ToolProgressEventPayload;
+        const roundedSeconds = Math.max(1, Math.round(ev.elapsed_time_seconds));
+        const progressLine = `${ev.tool_name} · ${roundedSeconds}s`;
+        setSessionsMessages((prev) => {
+          const msgs = prev[sid];
+          if (!msgs) return prev;
+          const idx = msgs.findIndex((m) => 'loading' in m && m.loading);
+          if (idx === -1) return prev;
+          const ai = msgs[idx] as AiMessage;
+          const updated = [...msgs];
+          updated[idx] = {
+            ...ai,
+            blocks: updateBlockToolProgress(ai.blocks, ev.tool_use_id, ev.tool_name, progressLine),
+          };
+          return { ...prev, [sid]: updated };
+        });
+        return;
+      }
+
+      if (payload.type === 'tool_use_summary' && payload.event) {
+        const ev = payload.event as ToolUseSummaryEventPayload;
+        setSessionsMessages((prev) => {
+          const msgs = prev[sid];
+          if (!msgs) return prev;
+          const idx = msgs.findIndex((m) => 'loading' in m && m.loading);
+          if (idx === -1) return prev;
+          const ai = msgs[idx] as AiMessage;
+          const updated = [...msgs];
+          updated[idx] = {
+            ...ai,
+            blocks: updateBlockToolSummary(ai.blocks, ev.preceding_tool_use_ids, ev.summary),
+          };
+          return { ...prev, [sid]: updated };
+        });
+        return;
+      }
+
+      if (payload.type === 'user' && payload.event) {
+        const parsed = parseUserEvent(payload.event as UserEventPayload);
+        if (parsed) {
+          setSessionsMessages((prev) => {
+            const msgs = prev[sid] ?? [];
+            if (parsed.isCommandOutput) {
+              for (let i = msgs.length - 1; i >= 0; i--) {
+                const m = msgs[i];
+                if (m.role === 'user' && m.content.startsWith('/')) {
+                  const updated = { ...m, subtext: m.subtext ? `${m.subtext}\n${parsed.message.content}` : parsed.message.content };
+                  return { ...prev, [sid]: [...msgs.slice(0, i), updated, ...msgs.slice(i + 1)] };
+                }
+              }
+            }
+            return { ...prev, [sid]: [...msgs, parsed.message] };
+          });
+        }
+        return;
+      }
+
+      if (payload.type === 'compact_boundary') {
+        return;
+      }
+
+      if (payload.type === 'result' || payload.type === 'cancelled') {
+        setSessionsMessages((prev) => {
+          const msgs = prev[sid];
+          if (!msgs) return prev;
+          const idx = msgs.findIndex((m) => 'loading' in m && m.loading);
+          if (idx === -1) return prev;
+          const ai = msgs[idx] as AiMessage;
+          // AI bubble 没有任何内容块（如 /compact）→ 直接移除
+          if (ai.blocks.length === 0) {
+            return { ...prev, [sid]: msgs.filter((_, i) => i !== idx) };
+          }
+          const updated = [...msgs];
+          updated[idx] = { ...ai, loading: false };
+          return { ...prev, [sid]: updated };
+        });
+        setSessionsLoading((prev) => prev[sid] ? { ...prev, [sid]: false } : prev);
+        return;
+      }
+
+      if (payload.type === 'error') {
+        const errorMessage = payload.message ?? 'Unknown error';
+        setSessionsMessages((prev) => {
+          const msgs = prev[sid];
+          if (!msgs) return prev;
+          const idx = msgs.findIndex((m) => 'loading' in m && m.loading);
+          if (idx === -1) return prev;
+          const updated = [...msgs];
+          updated[idx] = {
+            ...msgs[idx],
+            role: 'ai' as const,
+            blocks: [{ type: 'text' as const, key: nextKey(), text: `Error: ${errorMessage}` }],
+            loading: false,
+          } as AiMessage;
+          return { ...prev, [sid]: updated };
+        });
+        setSessionsLoading((prev) => prev[sid] ? { ...prev, [sid]: false } : prev);
+      }
+    });
+  }, [wsSubscribe]);
+
   const currentMessages = selectedSessionId ? (sessionsMessages[selectedSessionId] ?? []) : [];
   const currentLoading = selectedSessionId ? (sessionsLoading[selectedSessionId] ?? false) : false;
 
@@ -107,9 +245,7 @@ export default function App() {
     setChatKey((k) => k + 1);
   }, []);
 
-  const handleSelectSession = useCallback(async (cwd: string, sessionId: string) => {
-    const list = await invoke<ProjectInfo[]>('list_projects');
-    setProjects(list);
+  const handleSelectSession = useCallback((cwd: string, sessionId: string) => {
     setActiveCwd(cwd);
     setSelectedSessionId(sessionId);
     setChatKey((k) => k + 1);
@@ -286,7 +422,6 @@ export default function App() {
                 onUpdateMessages={updateSessionMessages}
                 onUpdateLoading={updateSessionLoading}
                 wsSend={wsSend}
-                wsSubscribe={wsSubscribe}
                 onNewSession={handleNewSession}
                 onSwitchProject={handleSwitchProject}
                 onAddProject={handleAddProject}

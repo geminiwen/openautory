@@ -53,7 +53,7 @@ interface ToolUseTrace {
   summary?: string;
 }
 
-type ContentBlock =
+export type ContentBlock =
   | { type: 'thinking'; key: string; text: string }
   | { type: 'text'; key: string; text: string }
   | { type: 'tool_use'; key: string; toolUse: ToolUseTrace };
@@ -67,9 +67,10 @@ interface UserMessage {
   key: string;
   role: 'user';
   content: string;
+  subtext?: string;
 }
 
-interface AiMessage {
+export interface AiMessage {
   key: string;
   role: 'ai';
   blocks: ContentBlock[];
@@ -107,28 +108,40 @@ type AssistantContentBlock =
   | AssistantToolUseBlock
   | AssistantUnknownBlock;
 
-interface AssistantEventPayload {
+export interface AssistantEventPayload {
   message?: {
     content?: AssistantContentBlock[];
   };
 }
 
-interface ToolProgressEventPayload {
+export interface ToolProgressEventPayload {
   tool_use_id: string;
   tool_name: string;
   elapsed_time_seconds: number;
 }
 
-interface ToolUseSummaryEventPayload {
+export interface ToolUseSummaryEventPayload {
   summary: string;
   preceding_tool_use_ids: string[];
 }
 
-interface ServerPayload {
-  type: 'assistant' | 'result' | 'tool_progress' | 'tool_use_summary' | 'error' | 'session_init' | 'session_ready' | 'cancelled' | 'compact_boundary';
+export interface ServerPayload {
+  type: 'assistant' | 'result' | 'tool_progress' | 'tool_use_summary' | 'error' | 'session_init' | 'session_ready' | 'cancelled' | 'compact_boundary' | 'user' | 'system';
+  subtype?: string;
   sessionId?: string;
-  event?: AssistantEventPayload | ToolProgressEventPayload | ToolUseSummaryEventPayload;
+  event?: AssistantEventPayload | ToolProgressEventPayload | ToolUseSummaryEventPayload | UserEventPayload | SystemEventPayload;
   message?: string;
+}
+
+export interface UserEventPayload {
+  type: 'user';
+  message?: { role: string; content: unknown };
+}
+
+interface SystemEventPayload {
+  type: 'system';
+  subtype?: string;
+  content?: string;
 }
 
 const STARTER_PROMPTS = [
@@ -137,8 +150,8 @@ const STARTER_PROMPTS = [
   'Find risky areas in this codebase and suggest tests.',
 ];
 
-let msgCounter = 0;
-const nextKey = () => String(++msgCounter);
+export let msgCounter = 0;
+export const nextKey = () => String(++msgCounter);
 
 const USER_ID = 'desktop-user';
 
@@ -156,7 +169,71 @@ function formatToolInput(input: unknown): string {
   }
 }
 
-function appendAssistantBlocks(existing: ContentBlock[], contentArray: AssistantContentBlock[]): ContentBlock[] {
+/** 从 XML 标签中提取内容：`<tag>content</tag>` → `"content"` */
+function extractXmlTag(s: string, tag: string): string | null {
+  const open = `<${tag}>`;
+  const close = `</${tag}>`;
+  const start = s.indexOf(open);
+  if (start === -1) return null;
+  const contentStart = start + open.length;
+  const end = s.indexOf(close, contentStart);
+  if (end === -1) return null;
+  const content = s.slice(contentStart, end).trim();
+  return content || null;
+}
+
+export interface ParsedUserEvent {
+  message: UserMessage;
+  isCommandOutput: boolean;
+}
+
+/** 解析 SDK user event 为 UserMessage，返回 null 表示应跳过 */
+export function parseUserEvent(event: UserEventPayload): ParsedUserEvent | null {
+  // compact 产生的合成摘要不显示
+  if ((event as Record<string, unknown>).isSynthetic) return null;
+  const content = event.message?.content;
+  if (!content) return null;
+
+  let text: string;
+  if (typeof content === 'string') {
+    if (!content || content.startsWith('/')) return null;
+    text = content;
+  } else if (Array.isArray(content)) {
+    // 跳过 tool_result，提取 text
+    const textBlock = (content as Array<Record<string, unknown>>).find(
+      (b) => b.type === 'text' && typeof b.text === 'string' && (b.text as string).trim(),
+    );
+    if (!textBlock) return null;
+    text = (textBlock.text as string).trim();
+    if (!text || text.startsWith('/')) return null;
+  } else {
+    return null;
+  }
+
+  // 解析 XML 协议标签
+  let isCommandOutput = false;
+  if (text.startsWith('<')) {
+    if (text.startsWith('<task-notification>')) {
+      text = extractXmlTag(text, 'summary') ?? text;
+    } else if (text.startsWith('<command-name>') || text.startsWith('<command-message>')) {
+      const cmd = extractXmlTag(text, 'command-name') ?? extractXmlTag(text, 'command-message') ?? '';
+      const args = extractXmlTag(text, 'command-args') ?? '';
+      text = args ? `${cmd} ${args}` : cmd;
+      if (!text) return null;
+    } else if (text.startsWith('<local-command-stdout>')) {
+      text = extractXmlTag(text, 'local-command-stdout') ?? text;
+      isCommandOutput = true;
+    } else if (text.startsWith('<local-command-stderr>')) {
+      text = extractXmlTag(text, 'local-command-stderr') ?? text;
+      isCommandOutput = true;
+    }
+  }
+
+  if (!text) return null;
+  return { message: { key: nextKey(), role: 'user', content: text }, isCommandOutput };
+}
+
+export function appendAssistantBlocks(existing: ContentBlock[], contentArray: AssistantContentBlock[]): ContentBlock[] {
   const next = [...existing];
   const seenThinking = new Set(
     existing
@@ -211,7 +288,7 @@ function appendAssistantBlocks(existing: ContentBlock[], contentArray: Assistant
   return next;
 }
 
-function updateBlockToolProgress(
+export function updateBlockToolProgress(
   blocks: ContentBlock[],
   toolUseId: string,
   toolName: string,
@@ -239,7 +316,7 @@ function updateBlockToolProgress(
   return next;
 }
 
-function updateBlockToolSummary(
+export function updateBlockToolSummary(
   blocks: ContentBlock[],
   toolUseIds: string[],
   summary: string,
@@ -288,14 +365,26 @@ type HistoryBlock =
   | { type: 'text'; text: string }
   | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> };
 type HistoryMsg =
-  | { role: 'user'; text: string }
+  | { role: 'user'; text: string; subtext?: string; isCommandOutput?: boolean }
   | { role: 'assistant'; blocks: HistoryBlock[] }
   | { role: 'summary'; text: string };
 
 function historyToMessages(history: HistoryMsg[]): Message[] {
-  return history.flatMap((m) => {
+  // 仅将 command stdout/stderr 合并到前一条 command 消息的 subtext
+  const merged: HistoryMsg[] = [];
+  for (const m of history) {
+    if (m.role === 'user' && m.isCommandOutput && merged.length > 0) {
+      const prev = merged[merged.length - 1];
+      if (prev.role === 'user' && prev.text.startsWith('/')) {
+        prev.subtext = prev.subtext ? `${prev.subtext}\n${m.text}` : m.text;
+        continue;
+      }
+    }
+    merged.push(m.role === 'user' ? { ...m } : m);
+  }
+  return merged.flatMap((m) => {
     if (m.role === 'user') {
-      return [{ key: nextKey(), role: 'user' as const, content: m.text }];
+      return [{ key: nextKey(), role: 'user' as const, content: m.text, subtext: m.subtext }];
     }
     if (m.role === 'summary') {
       return [{
@@ -327,13 +416,12 @@ export interface ChatProps {
   onUpdateMessages: (sessionId: string, updater: (prev: Message[]) => Message[]) => void;
   onUpdateLoading: (sessionId: string, loading: boolean) => void;
   wsSend: (data: unknown) => void;
-  wsSubscribe: (listener: (payload: ServerPayload) => void) => () => void;
   onNewSession?: (sessionId: string, preview: string) => void;
   onSwitchProject?: (cwd: string) => void;
   onAddProject?: () => void;
 }
 
-export default function Chat({ cwd, sessionId: propSessionId, projectName, projects, messages, loading, onUpdateMessages, onUpdateLoading, wsSend, wsSubscribe, onNewSession, onSwitchProject, onAddProject }: ChatProps) {
+export default function Chat({ cwd, sessionId: propSessionId, projectName, projects, messages, loading, onUpdateMessages, onUpdateLoading, wsSend, onNewSession, onSwitchProject, onAddProject }: ChatProps) {
   const [inputValue, setInputValue] = useState('');
   const endRef = useRef<HTMLDivElement | null>(null);
 
@@ -360,11 +448,13 @@ export default function Chat({ cwd, sessionId: propSessionId, projectName, proje
     });
   }, [setMessages, cwd]);
 
-  // On mount: load history if we have an existing session
+  // On mount: load history if we have an existing session and no in-memory messages
   useEffect(() => {
     if (propSessionId) {
       actualSessionIdRef.current = propSessionId;
-      loadHistory(propSessionId);
+      if (messages.length === 0) {
+        loadHistory(propSessionId);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // intentionally only runs on mount (Chat is remounted via key)
@@ -373,118 +463,19 @@ export default function Chat({ cwd, sessionId: propSessionId, projectName, proje
     endRef.current?.scrollIntoView({ block: 'end' });
   }, [messages]);
 
-  const appendAssistantPayload = useCallback((key: string, payload: AssistantEventPayload) => {
-    setMessages((prev) => {
-      const index = prev.findIndex((m) => m.key === key);
-      if (index === -1) return prev;
-      const msg = prev[index] as AiMessage;
-      const next = [...prev];
-      next[index] = {
-        ...msg,
-        blocks: appendAssistantBlocks(msg.blocks, payload.message?.content ?? []),
-        loading: true,
-      };
-      return next;
-    });
-  }, [setMessages]);
-
-  const appendToolProgressPayload = useCallback((key: string, payload: ToolProgressEventPayload) => {
-    const roundedSeconds = Math.max(1, Math.round(payload.elapsed_time_seconds));
-    const progressLine = `${payload.tool_name} · ${roundedSeconds}s`;
-    setMessages((prev) => {
-      const index = prev.findIndex((m) => m.key === key);
-      if (index === -1) return prev;
-      const msg = prev[index] as AiMessage;
-      const next = [...prev];
-      next[index] = {
-        ...msg,
-        blocks: updateBlockToolProgress(msg.blocks, payload.tool_use_id, payload.tool_name, progressLine),
-      };
-      return next;
-    });
-  }, [setMessages]);
-
-  const appendToolSummaryPayload = useCallback((key: string, payload: ToolUseSummaryEventPayload) => {
-    setMessages((prev) => {
-      const index = prev.findIndex((m) => m.key === key);
-      if (index === -1) return prev;
-      const msg = prev[index] as AiMessage;
-      const next = [...prev];
-      next[index] = {
-        ...msg,
-        blocks: updateBlockToolSummary(msg.blocks, payload.preceding_tool_use_ids, payload.summary),
-      };
-      return next;
-    });
-  }, [setMessages]);
-
-  const finishRequest = useCallback(() => {
-    setLoading(false);
-  }, [setLoading]);
-
   const handleCancel = useCallback(() => {
     const sid = actualSessionIdRef.current;
     if (!sid) return;
     wsSend({ type: 'cancel', sessionId: sid });
   }, [wsSend]);
 
-  // Track the current AI message key so the subscription listener can update the right bubble
-  const aiKeyRef = useRef<string | null>(null);
-
-  // Subscribe to incoming WebSocket messages, filter by current session
-  useEffect(() => {
-    const unsubscribe = wsSubscribe((payload) => {
-      const currentAiKey = aiKeyRef.current;
-      // Only process messages for our session
-      if (payload.sessionId && payload.sessionId !== actualSessionIdRef.current) return;
-
-      if (payload.type === 'assistant' && payload.event && currentAiKey) {
-        appendAssistantPayload(currentAiKey, payload.event as AssistantEventPayload);
-        return;
-      }
-      if (payload.type === 'tool_progress' && payload.event && currentAiKey) {
-        appendToolProgressPayload(currentAiKey, payload.event as ToolProgressEventPayload);
-        return;
-      }
-      if (payload.type === 'tool_use_summary' && payload.event && currentAiKey) {
-        appendToolSummaryPayload(currentAiKey, payload.event as ToolUseSummaryEventPayload);
-        return;
-      }
-      if (payload.type === 'compact_boundary') {
-        loadHistory(actualSessionIdRef.current);
-        return;
-      }
-      if (payload.type === 'result' && currentAiKey) {
-        setMessages((prev) =>
-          prev.map((m) => (m.key === currentAiKey && m.role === 'ai' ? { ...m, loading: false } : m)),
-        );
-        aiKeyRef.current = null;
-        finishRequest();
-        return;
-      }
-      if (payload.type === 'cancelled' && currentAiKey) {
-        setMessages((prev) =>
-          prev.map((m) => (m.key === currentAiKey && m.role === 'ai' ? { ...m, loading: false } : m)),
-        );
-        aiKeyRef.current = null;
-        finishRequest();
-        return;
-      }
-      if (payload.type === 'error' && currentAiKey) {
-        const errorMessage = payload.message ?? 'Unknown error';
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.key === currentAiKey && m.role === 'ai'
-              ? { ...m, blocks: [{ type: 'text' as const, key: nextKey(), text: `Error: ${errorMessage}` }], loading: false }
-              : m,
-          ),
-        );
-        aiKeyRef.current = null;
-        finishRequest();
-      }
-    });
-    return unsubscribe;
-  }, [wsSubscribe, appendAssistantPayload, appendToolProgressPayload, appendToolSummaryPayload, finishRequest, loadHistory]);
+  // IME 输入法：选词时按 Enter 不应触发发送
+  const composingRef = useRef(false);
+  const handleCompositionStart = useCallback(() => { composingRef.current = true; }, []);
+  const handleCompositionEnd = useCallback(() => { composingRef.current = false; }, []);
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.keyCode === 229 || e.nativeEvent.isComposing || composingRef.current) return false;
+  }, []);
 
   const handleSubmit = useCallback(async (rawText: string) => {
     const text = rawText.trim();
@@ -502,7 +493,6 @@ export default function Chat({ cwd, sessionId: propSessionId, projectName, proje
 
     const userKey = nextKey();
     const aiKey = nextKey();
-    aiKeyRef.current = aiKey;
 
     setMessages((prev) => [
       ...prev,
@@ -578,6 +568,9 @@ export default function Chat({ cwd, sessionId: propSessionId, projectName, proje
                   <div className={`${styles.row} ${styles.rowUser}`}>
                     <div className={`${styles.bubble} ${styles.bubbleUser}`}>
                       <div className={styles.bubbleText}>{message.content}</div>
+                      {message.subtext && (
+                        <div className={styles.bubbleSubtext}>{message.subtext}</div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -677,7 +670,11 @@ export default function Chat({ cwd, sessionId: propSessionId, projectName, proje
         </div>
       </div>
 
-      <div className={styles.inputWrap}>
+      <div
+        className={styles.inputWrap}
+        onCompositionStart={handleCompositionStart}
+        onCompositionEnd={handleCompositionEnd}
+      >
         <Sender
           rootClassName={styles.sender}
           classNames={{ input: styles.senderInput }}
@@ -685,6 +682,7 @@ export default function Chat({ cwd, sessionId: propSessionId, projectName, proje
           onChange={setInputValue}
           onSubmit={handleSubmit}
           onCancel={handleCancel}
+          onKeyDown={handleKeyDown}
           loading={loading}
           placeholder="Type your request and press Enter"
           autoSize={{ minRows: 1, maxRows: 5 }}

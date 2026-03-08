@@ -1,5 +1,9 @@
 # Session 管理机制
 
+## 相关文档
+
+- [Claude 会话标题（summary）机制](./SESSION_TITLE.md)
+
 ## 路径约定
 
 Claude Code 将 session 文件存储于：

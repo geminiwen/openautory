@@ -139,7 +139,7 @@ const server = Bun.serve<WsData>({
       try {
         for await (const event of agent.processMessageStream(msg, abortController)) {
           const { type, subtype } = event as { type: string; subtype?: string };
-          logger.info('SDK event', { type, subtype, ...(type === 'result' ? { event: JSON.stringify(event) } : {}) });
+          logger.info('SDK event', { type, subtype: subtype ?? undefined, ...(type === 'result' || type === 'system' || type === 'user' ? { event: JSON.stringify(event) } : {}) });
 
           if (event.type === 'system' && event.subtype === 'init') {
             logger.info('Session init', { sessionId: msg.sessionId, event: JSON.stringify(event) });
@@ -167,6 +167,19 @@ const server = Bun.serve<WsData>({
               ws.data.activeAborts.delete(msg.sessionId);
             }
             ws.send(JSON.stringify({ type: event.type, sessionId: msg.sessionId, event }));
+          }
+
+          // 推送 user 消息（tool result 回放等）
+          if (event.type === 'user') {
+            ws.send(JSON.stringify({ type: 'user', sessionId: msg.sessionId, event }));
+          }
+
+          // 推送 system 子事件：slash command 输出、task notification 等
+          if (event.type === 'system') {
+            const sub = (event as { subtype?: string }).subtype;
+            if (sub === 'local_command_output' || sub === 'task_notification' || sub === 'status') {
+              ws.send(JSON.stringify({ type: 'system', subtype: sub, sessionId: msg.sessionId, event }));
+            }
           }
         }
         logger.info('Stream finished', { sessionId: msg.sessionId });

@@ -419,6 +419,16 @@ async fn pick_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
 }
 
 /// 从 session .jsonl 文件中解析对话历史，返回 [{role, text}] 列表。
+/// 从字符串中提取指定 XML 标签的内容，如 `<tag>content</tag>` → `Some("content")`
+fn extract_xml_tag(s: &str, tag: &str) -> Option<String> {
+    let open = format!("<{}>", tag);
+    let close = format!("</{}>", tag);
+    let start = s.find(&open)? + open.len();
+    let end = s[start..].find(&close)? + start;
+    let content = s[start..end].trim();
+    if content.is_empty() { None } else { Some(content.to_string()) }
+}
+
 /// user:      { role: "user", text: "..." }
 /// assistant: { role: "assistant", blocks: [ { type: "thinking"|"text"|"tool_use", ... } ] }
 #[tauri::command]
@@ -455,13 +465,16 @@ fn read_session_messages(session_id: String, cwd: String) -> Result<Vec<serde_js
         // tool_result 消息（工具返回值）和 plan prompt 不是用户手动输入，跳过
         if d.get("sourceToolAssistantUUID").is_some() { continue; }
         if d.get("planContent").is_some() { continue; }
+        // context compaction 摘要和仅 transcript 可见的消息不在 UI 展示
+        if d.get("isCompactSummary").and_then(|v| v.as_bool()).unwrap_or(false) { continue; }
+        if d.get("isVisibleInTranscriptOnly").and_then(|v| v.as_bool()).unwrap_or(false) { continue; }
 
         if t == "user" {
             let msg_content = match d.get("message").and_then(|m| m.get("content")) {
                 Some(c) => c,
                 None => continue,
             };
-            let text = if let Some(s) = msg_content.as_str() {
+            let raw = if let Some(s) = msg_content.as_str() {
                 if s.is_empty() || s.starts_with('/') { continue; }
                 s.to_string()
             } else if let Some(arr) = msg_content.as_array() {
@@ -476,7 +489,37 @@ fn read_session_messages(session_id: String, cwd: String) -> Result<Vec<serde_js
             } else {
                 continue
             };
-            messages.push(serde_json::json!({ "role": "user", "text": text }));
+            // 解析 Claude Code 协议 XML 标签
+            let mut is_command_output = false;
+            let text = if raw.starts_with('<') {
+                if raw.starts_with("<task-notification>") {
+                    // 原样显示，后续再决定如何处理
+                    raw
+                } else if raw.starts_with("<command-name>") || raw.starts_with("<command-message>") {
+                    // slash command：提取命令名和参数，加 / 前缀与 WS 实时路径保持一致
+                    let cmd = extract_xml_tag(&raw, "command-name")
+                        .or_else(|| extract_xml_tag(&raw, "command-message"))
+                        .unwrap_or_default();
+                    let args = extract_xml_tag(&raw, "command-args").unwrap_or_default();
+                    let display = if args.is_empty() { format!("/{}", cmd) } else { format!("/{} {}", cmd, args) };
+                    if cmd.is_empty() { continue; }
+                    display
+                } else if raw.starts_with("<local-command-stdout>") {
+                    is_command_output = true;
+                    extract_xml_tag(&raw, "local-command-stdout").unwrap_or_default()
+                } else if raw.starts_with("<local-command-stderr>") {
+                    is_command_output = true;
+                    extract_xml_tag(&raw, "local-command-stderr").unwrap_or_default()
+                } else {
+                    raw
+                }
+            } else {
+                raw
+            };
+            if text.is_empty() { continue; }
+            let mut msg = serde_json::json!({ "role": "user", "text": text });
+            if is_command_output { msg["isCommandOutput"] = serde_json::json!(true); }
+            messages.push(msg);
         } else {
             let content_arr = match d.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_array()) {
                 Some(arr) => arr,

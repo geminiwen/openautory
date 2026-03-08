@@ -166,6 +166,14 @@
   word-break: break-word;
 }
 
+.bubbleSubtext {
+  margin-top: 4px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* ── AI Bubble (ant-design/x Bubble component) ──────────────── */
 
 .aiBubbleRoot {
