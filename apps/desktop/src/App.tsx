@@ -194,6 +194,11 @@ export default function App() {
       return;
     }
 
+    if (event.detail === 2) {
+      void appWindow.toggleMaximize();
+      return;
+    }
+
     void appWindow.startDragging();
   }, []);
 

@@ -310,7 +310,7 @@ function historyToMessages(history: HistoryMsg[]): Message[] {
       return {
         type: 'tool_use' as const,
         key: nextKey(),
-        toolUse: { id: b.id, name: b.name, input: b.input, progress: [] },
+        toolUse: { id: b.id, name: b.name, inputPreview: formatToolInput(b.input), progress: [] },
       };
     });
     return [{ key: nextKey(), role: 'ai' as const, blocks }];

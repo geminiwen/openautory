@@ -15,8 +15,8 @@
         "title": "OpenAutory",
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
-        "width": 1200,
-        "height": 800,
+        "width": 1620,
+        "height": 930,
         "resizable": true
       }
     ],

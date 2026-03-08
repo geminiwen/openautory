@@ -512,7 +512,21 @@ fn read_session_messages(session_id: String, cwd: String) -> Result<Vec<serde_js
                 }
             }
             if !blocks.is_empty() {
-                messages.push(serde_json::json!({ "role": "assistant", "blocks": blocks }));
+                // 合并连续的 assistant 消息（跳过 tool_result 后相邻的 assistant 应合并）
+                let should_merge = matches!(
+                    messages.last(),
+                    Some(last) if last.get("role").and_then(|v| v.as_str()) == Some("assistant")
+                );
+                if should_merge {
+                    if let Some(arr) = messages.last_mut()
+                        .and_then(|l| l.get_mut("blocks"))
+                        .and_then(|v| v.as_array_mut())
+                    {
+                        for b in blocks { arr.push(b); }
+                    }
+                } else {
+                    messages.push(serde_json::json!({ "role": "assistant", "blocks": blocks }));
+                }
             }
         }
     }
