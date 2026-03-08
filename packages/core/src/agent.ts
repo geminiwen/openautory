@@ -1,10 +1,11 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKMessage, Options, McpServerConfig, SettingSource } from '@anthropic-ai/claude-agent-sdk';
 import type { UnifiedMessage, UserRole } from '@openautory/shared';
 import { createLogger } from '@openautory/logger';
 import type { Logger } from '@openautory/logger';
-import { MemorySessionStore } from './session.js';
-import type { SessionStore } from './session.js';
 
 export interface AgentConfig {
   /** Claude 模型，默认使用 CLI 配置 */
@@ -38,7 +39,6 @@ export interface AgentConfig {
    * 默认 true。
    */
   persistSession?: boolean;
-  sessionStore?: SessionStore;
   /**
    * 注入给 query() 的 MCP 服务器。
    * 支持以下类型：
@@ -62,12 +62,10 @@ export type AgentMessageEvent = SDKMessage;
 
 export class AgentCore {
   private readonly config: AgentConfig;
-  private readonly session: SessionStore;
   private readonly logger: Logger;
 
   constructor(config: AgentConfig = {}) {
     this.config = config;
-    this.session = config.sessionStore ?? new MemorySessionStore();
     this.logger = createLogger('agent');
   }
 
@@ -94,10 +92,11 @@ export class AgentCore {
   /**
    * 流式处理统一消息，yield 每一个 SDKMessage 事件。
    * 适合 WebSocket 场景，可实时转发 assistant/tool_progress 等事件给客户端。
+   * 传入 abortController 可在外部中断流。
    */
-  async *processMessageStream(msg: UnifiedMessage): AsyncGenerator<SDKMessage> {
+  async *processMessageStream(msg: UnifiedMessage, abortController?: AbortController): AsyncGenerator<SDKMessage> {
     const persist = this.config.persistSession ?? true;
-    const entry = persist ? await this.session.get(msg.sessionId) : undefined;
+    this.logger.info('processMessageStream start', { sessionId: msg.sessionId, persist, cwd: this.config.cwd });
 
     const options: Options = {
       ...(this.config.model ? { model: this.config.model } : {}),
@@ -107,38 +106,46 @@ export class AgentCore {
       ...(this.config.allowedTools ? { allowedTools: this.config.allowedTools } : {}),
       ...this.buildPermissionOptions(msg.role),
       persistSession: persist,
-      ...(entry ? { resume: entry.claudeSessionId } : {}),
+      ...(persist && msg.sessionId ? { resume: msg.sessionId } : {}),
       ...(this.config.mcpServers ? { mcpServers: this.config.mcpServers } : {}),
       settingSources: this.config.settingSources ?? ['user', 'project', 'local'],
+      ...(abortController ? { abortController } : {}),
     };
 
-    let capturedSessionId: string | undefined;
+    this.logger.info('query options', {
+      model: options.model,
+      cwd: options.cwd,
+      persistSession: options.persistSession,
+      resume: (options as Record<string, unknown>)['resume'],
+    });
 
     const q = query({ prompt: msg.content, options });
 
-    for await (const event of q) {
-      // 捕获 session_id（来自 system/init 消息）
-      if (event.type === 'system' && event.subtype === 'init') {
-        capturedSessionId = event.session_id;
+    try {
+      for await (const event of q) {
+        const { type, subtype } = event as { type: string; subtype?: string };
+        this.logger.debug('SDK event', { type, subtype });
+
+        yield event;
       }
-
-      // 输出所有事件（含 subtype）便于调试
-      const { type, subtype } = event as { type: string; subtype?: string };
-      this.logger.debug('SDK event', { type, subtype, event: JSON.stringify(event) });
-
-      yield event;
+    } catch (err) {
+      if (abortController?.signal.aborted) {
+        this.logger.info('Stream aborted', { sessionId: msg.sessionId });
+        return;
+      }
+      throw err;
     }
+  }
 
-    // persistSession: false 时不追踪 session，避免下次 resume 失败
-    if (!persist) return;
-
-    const sessionId = capturedSessionId ?? entry?.claudeSessionId;
-    if (sessionId) {
-      await this.session.set(msg.sessionId, {
-        claudeSessionId: sessionId,
-        updatedAt: Date.now(),
-      });
-    }
+  /** 判断 session 文件是否存在且包含真实对话数据（SDK 自建，>1 行）。 */
+  private hasRealSessionData(sessionId: string): boolean {
+    if (!sessionId) return false;
+    const cwd = this.config.cwd ?? process.cwd();
+    const encoded = cwd.replace(/[/.]/g, '-');
+    const file = path.join(os.homedir(), '.claude', 'projects', encoded, `${sessionId}.jsonl`);
+    if (!fs.existsSync(file)) return false;
+    const lines = fs.readFileSync(file, 'utf8').split('\n').filter(l => l.trim());
+    return lines.length > 1;
   }
 
   private buildPermissionOptions(role: UserRole): Pick<Options, 'permissionMode' | 'allowDangerouslySkipPermissions'> {
@@ -166,8 +173,14 @@ export class AgentCore {
     return {};
   }
 
-  /** 清除指定会话（下次交互将开启新 session） */
-  async clearSession(sessionId: string): Promise<void> {
-    await this.session.delete(sessionId);
+  /** 清除指定会话（删除磁盘上的 .jsonl 文件） */
+  clearSession(sessionId: string): void {
+    const cwd = this.config.cwd ?? process.cwd();
+    const encoded = cwd.replace(/[/.]/g, '-');
+    const file = path.join(os.homedir(), '.claude', 'projects', encoded, `${sessionId}.jsonl`);
+    if (fs.existsSync(file)) {
+      fs.rmSync(file);
+      this.logger.info('Session file deleted', { sessionId });
+    }
   }
 }

@@ -387,15 +387,22 @@
   color: #85929f;
 }
 
-.sender :global(.ant-btn-color-primary) {
+/* 发送按钮（type="primary" 旧 API → ant-btn-type-primary） */
+.sender :global(.ant-btn-type-primary) {
   background: var(--oa-accent);
   border-color: var(--oa-accent);
 }
 
-.sender :global(.ant-btn-color-primary):disabled {
+.sender :global(.ant-btn-type-primary):disabled {
   background: var(--oa-accent);
   border-color: var(--oa-accent);
   opacity: 0.4;
+}
+
+/* 停止按钮（loading 状态：color="primary" + variant="text" → ant-btn-color-primary ant-btn-variant-text）
+   保持透明背景，只确保 hover 有轻微反馈 */
+.sender :global(.ant-btn-color-primary.ant-btn-variant-text):hover {
+  background: rgba(15, 118, 110, 0.1);
 }
 
 @media (max-width: 900px) {

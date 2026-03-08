@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { Bubble, Sender } from '@ant-design/x';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -122,7 +123,7 @@ interface ToolUseSummaryEventPayload {
 }
 
 interface ServerPayload {
-  type: 'assistant' | 'result' | 'tool_progress' | 'tool_use_summary' | 'error' | 'session_init';
+  type: 'assistant' | 'result' | 'tool_progress' | 'tool_use_summary' | 'error' | 'session_init' | 'cancelled' | 'compact_boundary';
   event?: AssistantEventPayload | ToolProgressEventPayload | ToolUseSummaryEventPayload;
   message?: string;
 }
@@ -136,8 +137,8 @@ const STARTER_PROMPTS = [
 let msgCounter = 0;
 const nextKey = () => String(++msgCounter);
 
-const SESSION_ID = `desktop:${Date.now()}`;
 const USER_ID = 'desktop-user';
+const SESSION_CWD = '~/.autory';
 
 function normalizeText(value: string): string {
   return value.trim().replace(/\s+/g, ' ');
@@ -280,11 +281,61 @@ const aiBubbleClassNames = {
   content: styles.aiBubbleContent,
 };
 
+type HistoryBlock =
+  | { type: 'thinking'; text: string }
+  | { type: 'text'; text: string }
+  | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> };
+type HistoryMsg =
+  | { role: 'user'; text: string }
+  | { role: 'assistant'; blocks: HistoryBlock[] }
+  | { role: 'summary'; text: string };
+
+function historyToMessages(history: HistoryMsg[]): Message[] {
+  return history.flatMap((m) => {
+    if (m.role === 'user') {
+      return [{ key: nextKey(), role: 'user' as const, content: m.text }];
+    }
+    if (m.role === 'summary') {
+      return [{
+        key: nextKey(),
+        role: 'ai' as const,
+        blocks: [{ type: 'text' as const, key: nextKey(), text: `*— 以上对话已压缩 —*\n\n${m.text}` }],
+      }];
+    }
+    const blocks: ContentBlock[] = m.blocks.map((b) => {
+      if (b.type === 'thinking') return { type: 'thinking' as const, key: nextKey(), text: b.text };
+      if (b.type === 'text') return { type: 'text' as const, key: nextKey(), text: b.text };
+      return {
+        type: 'tool_use' as const,
+        key: nextKey(),
+        toolUse: { id: b.id, name: b.name, input: b.input, progress: [] },
+      };
+    });
+    return [{ key: nextKey(), role: 'ai' as const, blocks }];
+  });
+}
+
 export default function Chat() {
+  // undefined = 初始化中（禁用输入）; null/string = 已就绪
+  const [sessionId, setSessionId] = useState<string | null | undefined>(undefined);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
+  const [inputValue, setInputValue] = useState('');
   const wsRef = useRef<WebSocket | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
+
+  const loadHistory = useCallback((sid: string) => {
+    invoke<HistoryMsg[]>('read_session_messages', { sessionId: sid, cwd: SESSION_CWD }).then((history) => {
+      setMessages(historyToMessages(history));
+    });
+  }, []);
+
+  useEffect(() => {
+    invoke<string>('get_or_create_session', { cwd: SESSION_CWD }).then((id) => {
+      setSessionId(id);
+      if (id) loadHistory(id);
+    });
+  }, [loadHistory]);
 
   const closeSocket = useCallback(() => {
     if (wsRef.current) {
@@ -349,9 +400,15 @@ export default function Chat() {
     closeSocket();
   }, [closeSocket]);
 
+  const handleCancel = useCallback(() => {
+    if (!sessionId) return;  // null 或 undefined 时不发 cancel
+    wsRef.current?.send(JSON.stringify({ type: 'cancel', sessionId }));
+  }, [sessionId]);
+
   const handleSubmit = useCallback((rawText: string) => {
     const text = rawText.trim();
-    if (!text || loading) return;
+    if (!text || loading || sessionId === undefined) return;
+    setInputValue('');
 
     const userKey = nextKey();
     const aiKey = nextKey();
@@ -367,7 +424,7 @@ export default function Chat() {
     wsRef.current = ws;
 
     ws.onopen = () => {
-      ws.send(JSON.stringify({ type: 'message', sessionId: SESSION_ID, userId: USER_ID, content: text }));
+      ws.send(JSON.stringify({ type: 'message', sessionId, userId: USER_ID, content: text }));
     };
 
     ws.onmessage = (event: MessageEvent<string>) => {
@@ -390,7 +447,23 @@ export default function Chat() {
         appendToolSummaryPayload(aiKey, payload.event as ToolUseSummaryEventPayload);
         return;
       }
+      if (payload.type === 'session_ready') {
+        setSessionId(payload.sessionId as string);
+        return;
+      }
+      if (payload.type === 'compact_boundary') {
+        const sid = payload.sessionId as string;
+        loadHistory(sid);
+        return;
+      }
       if (payload.type === 'result') {
+        setMessages((prev) =>
+          prev.map((m) => (m.key === aiKey && m.role === 'ai' ? { ...m, loading: false } : m)),
+        );
+        finishRequest();
+        return;
+      }
+      if (payload.type === 'cancelled') {
         setMessages((prev) =>
           prev.map((m) => (m.key === aiKey && m.role === 'ai' ? { ...m, loading: false } : m)),
         );
@@ -423,7 +496,7 @@ export default function Chat() {
     };
 
     ws.onclose = () => { wsRef.current = null; };
-  }, [appendAssistantPayload, appendToolProgressPayload, appendToolSummaryPayload, finishRequest, loading]);
+  }, [appendAssistantPayload, appendToolProgressPayload, appendToolSummaryPayload, finishRequest, loadHistory, loading, sessionId]);
 
   return (
     <div className={styles.surface}>
@@ -440,7 +513,7 @@ export default function Chat() {
                   type="button"
                   className={styles.promptChip}
                   onClick={() => handleSubmit(prompt)}
-                  disabled={loading}
+                  disabled={loading || sessionId === undefined}
                 >
                   {prompt}
                 </button>
@@ -560,9 +633,13 @@ export default function Chat() {
         <Sender
           rootClassName={styles.sender}
           classNames={{ input: styles.senderInput }}
+          value={inputValue}
+          onChange={setInputValue}
           onSubmit={handleSubmit}
+          onCancel={handleCancel}
           loading={loading}
-          placeholder="Type your request and press Enter"
+          disabled={sessionId === undefined}
+          placeholder={sessionId === undefined ? 'Initializing session…' : 'Type your request and press Enter'}
           autoSize={{ minRows: 1, maxRows: 5 }}
         />
       </div>

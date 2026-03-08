@@ -1,3 +1,6 @@
+import os from 'node:os';
+import path from 'node:path';
+import fs from 'node:fs';
 import { AgentCore } from '@openautory/core';
 import type { UnifiedMessage, UserRole } from '@openautory/shared';
 import { createLogger } from '@openautory/logger';
@@ -7,9 +10,14 @@ import { config } from './config.js';
 
 interface WsData {
   connectionId: string;
+  activeAborts: Map<string, AbortController>;
 }
 
 const logger = createLogger('server', { level: config.log.level, logDir: config.log.logDir });
+
+// ── 确保工作目录存在 ─────────────────────────────────────────────
+const agentCwd = path.join(os.homedir(), '.autory');
+fs.mkdirSync(agentCwd, { recursive: true });
 
 // ── 初始化适配器 ────────────────────────────────────────────────
 const httpAdapter = new HttpAdapter();
@@ -23,10 +31,10 @@ const mcpServers = buildMcpRegistry(activeAdapters, config.anthropic.extraMcpSer
 const agent = new AgentCore({
   ...(config.anthropic.model ? { model: config.anthropic.model } : {}),
   ...(config.anthropic.appendSystemPrompt ? { appendSystemPrompt: config.anthropic.appendSystemPrompt } : {}),
-  ...(config.anthropic.cwd ? { cwd: config.anthropic.cwd } : {}),
+  cwd: agentCwd,
   ...(config.anthropic.allowedTools ? { allowedTools: config.anthropic.allowedTools } : {}),
   ...(config.anthropic.guestPermissionMode ? { guestPermissionMode: config.anthropic.guestPermissionMode } : {}),
-  persistSession: false,
+  persistSession: true,
   mcpServers,
 });
 
@@ -49,7 +57,7 @@ const server = Bun.serve<WsData>({
     // WebSocket 升级
     if (url.pathname === '/ws') {
       const connectionId = crypto.randomUUID();
-      const success = server.upgrade(req, { data: { connectionId } });
+      const success = server.upgrade(req, { data: { connectionId, activeAborts: new Map() } });
       return success ? undefined : new Response('WebSocket upgrade failed', { status: 400 });
     }
 
@@ -58,40 +66,7 @@ const server = Bun.serve<WsData>({
       return Response.json({ status: 'ok', model: config.anthropic.model ?? 'cli-default' });
     }
 
-    // 自定义 HTTP 聊天接口（等待最终结果）
-    if (url.pathname === '/chat' && req.method === 'POST') {
-      const msgs = await httpAdapter.handleIncoming(req);
-      if (msgs.length === 0) {
-        return Response.json({ error: 'Invalid request' }, { status: 400 });
-      }
-
-      const msg = withRole(msgs[0]!);
-      const encoder = new TextEncoder();
-      const stream = new ReadableStream({
-        async start(controller) {
-          const send = (data: unknown) =>
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
-          try {
-            for await (const event of agent.processMessageStream(msg)) {
-              send(event);
-            }
-          } catch (err) {
-            send({ type: 'error', error: String(err) });
-          } finally {
-            controller.close();
-          }
-        },
-      });
-
-      return new Response(stream, {
-        headers: {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          'Connection': 'keep-alive',
-        },
-      });
-    }
-
+    // /chat 端点已移除，统一走 WebSocket
     return new Response('Not Found', { status: 404 });
   },
 
@@ -101,16 +76,56 @@ const server = Bun.serve<WsData>({
     },
 
     async message(ws, rawData) {
+      let parsed: { type?: string; sessionId?: string };
+      try {
+        parsed = JSON.parse(String(rawData));
+      } catch {
+        return;
+      }
+
+      // 处理取消请求
+      if (parsed.type === 'cancel') {
+        const sessionId = parsed.sessionId;
+        if (sessionId) {
+          ws.data.activeAborts.get(sessionId)?.abort();
+        }
+        ws.send(JSON.stringify({ type: 'cancelled', sessionId }));
+        return;
+      }
+
       const raw = httpAdapter.parseWsMessage(String(rawData), ws.data.connectionId);
-      if (!raw) return;
+      if (!raw) return;  // sessionId 缺失时静默忽略
 
       const msg = withRole(raw);
+      const abortController = new AbortController();
+      ws.data.activeAborts.set(msg.sessionId, abortController);
+
+      logger.info('WS message received', { sessionId: msg.sessionId, userId: msg.userId, content: msg.content.slice(0, 80) });
 
       try {
-        for await (const event of agent.processMessageStream(msg)) {
+        for await (const event of agent.processMessageStream(msg, abortController)) {
+          const { type, subtype } = event as { type: string; subtype?: string };
+          logger.info('SDK event', { type, subtype, ...(type === 'result' ? { event: JSON.stringify(event) } : {}) });
+
           if (event.type === 'system' && event.subtype === 'init') {
+            logger.info('Session init', { sessionId: msg.sessionId, event: JSON.stringify(event) });
             ws.send(JSON.stringify({ type: 'session_init', sessionId: msg.sessionId }));
             continue;
+          }
+
+          if (event.type === 'system' && event.subtype === 'compact_boundary') {
+            logger.info('Compact boundary', { sessionId: msg.sessionId });
+            ws.send(JSON.stringify({ type: 'compact_boundary', sessionId: msg.sessionId }));
+            continue;
+          }
+
+          if (event.type === 'result') {
+            // SDK 分配的真实 session_id 可能与我们传入的不同（新建 session 时）
+            const realSessionId = (event as Record<string, unknown>)['session_id'] as string | undefined;
+            if (realSessionId && realSessionId !== msg.sessionId) {
+              logger.info('Session ready', { clientSessionId: msg.sessionId, realSessionId });
+              ws.send(JSON.stringify({ type: 'session_ready', sessionId: realSessionId }));
+            }
           }
 
           if (
@@ -122,18 +137,25 @@ const server = Bun.serve<WsData>({
             ws.send(JSON.stringify({ type: event.type, sessionId: msg.sessionId, event }));
           }
         }
+        logger.info('Stream finished', { sessionId: msg.sessionId });
       } catch (err) {
+        logger.error('Stream error', { sessionId: msg.sessionId, err: String(err) });
         ws.send(JSON.stringify({ type: 'error', message: String(err) }));
+      } finally {
+        ws.data.activeAborts.delete(msg.sessionId);
       }
     },
 
     close(ws) {
+      for (const controller of ws.data.activeAborts.values()) {
+        controller.abort();
+      }
       logger.info('WS disconnected', { connectionId: ws.data.connectionId });
     },
   },
 });
 
-logger.info('Server running', { port: server.port });
+logger.info('Server running', { port: server.port, cwd: agentCwd });
 logger.info('Adapters initialized', { http: true, ws: true });
 
 // 优雅关闭：等待已有请求完成后退出
