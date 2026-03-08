@@ -1,4 +1,5 @@
-import { CloseOutlined, FolderAddOutlined, FolderOpenOutlined, FolderOutlined, PlusOutlined } from '@ant-design/icons';
+import { useState } from 'react';
+import { CloseOutlined, FolderAddOutlined, FolderOpenOutlined, FolderOutlined, PlusOutlined, RightOutlined } from '@ant-design/icons';
 import { Button, Dropdown } from 'antd';
 import { homeDir } from '@tauri-apps/api/path';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
@@ -57,6 +58,12 @@ export default function Sidebar({
   onRemoveProject,
   onDeleteSession,
 }: SidebarProps) {
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+
+  const toggleProject = (cwd: string) => {
+    setCollapsed((prev) => ({ ...prev, [cwd]: !prev[cwd] }));
+  };
+
   return (
     <div className={styles.sidebar}>
       <div className={styles.header}>
@@ -76,6 +83,7 @@ export default function Sidebar({
       <div className={styles.tree}>
         {projects.map((project) => {
           const isDefault = project.cwd === '~/.autory';
+          const isCollapsed = !!collapsed[project.cwd];
 
           return (
             <div key={project.cwd} className={styles.projectGroup}>
@@ -102,7 +110,8 @@ export default function Sidebar({
                   ],
                 }}
               >
-                <div className={styles.projectRow}>
+                <div className={styles.projectRow} onClick={() => toggleProject(project.cwd)}>
+                  <RightOutlined className={`${styles.collapseArrow} ${isCollapsed ? '' : styles.collapseArrowOpen}`} />
                   <FolderOutlined className={styles.projectIcon} />
                   <span className={styles.projectName}>{project.name}</span>
                   <Button
@@ -110,7 +119,7 @@ export default function Sidebar({
                     size="small"
                     icon={<PlusOutlined />}
                     className={styles.newThreadBtn}
-                    onClick={() => onNewThread(project.cwd)}
+                    onClick={(e) => { e.stopPropagation(); onNewThread(project.cwd); }}
                     title="新建"
                   />
                   {!isDefault && (
@@ -119,41 +128,45 @@ export default function Sidebar({
                       size="small"
                       icon={<CloseOutlined />}
                       className={styles.removeBtn}
-                      onClick={() => onRemoveProject(project.cwd)}
+                      onClick={(e) => { e.stopPropagation(); void onRemoveProject(project.cwd); }}
                       title="移除项目"
                     />
                   )}
                 </div>
               </Dropdown>
 
-              {project.sessions.length === 0 && (
-                <div className={styles.emptyHint}>无会话</div>
-              )}
-              {project.sessions.map((session) => (
-                <div
-                  key={session.id}
-                  className={`${styles.sessionRow}${session.id === activeSessionId ? ` ${styles.sessionRowActive}` : ''}`}
-                  onClick={() => onSelectSession(project.cwd, session.id)}
-                >
-                  <span className={styles.sessionPreview}>
-                    {session.preview || session.id.slice(0, 8)}
-                  </span>
-                  <span className={styles.sessionTime}>{formatRelativeTime(session.modified)}</span>
-                  {onDeleteSession && (
-                    <Button
-                      type="text"
-                      size="small"
-                      icon={<CloseOutlined />}
-                      className={styles.sessionDeleteBtn}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void onDeleteSession(project.cwd, session.id);
-                      }}
-                      title="删除"
-                    />
+              {!isCollapsed && (
+                <>
+                  {project.sessions.length === 0 && (
+                    <div className={styles.emptyHint}>无会话</div>
                   )}
-                </div>
-              ))}
+                  {project.sessions.map((session) => (
+                    <div
+                      key={session.id}
+                      className={`${styles.sessionRow}${session.id === activeSessionId ? ` ${styles.sessionRowActive}` : ''}`}
+                      onClick={() => onSelectSession(project.cwd, session.id)}
+                    >
+                      <span className={styles.sessionPreview}>
+                        {session.preview || session.id.slice(0, 8)}
+                      </span>
+                      <span className={styles.sessionTime}>{formatRelativeTime(session.modified)}</span>
+                      {onDeleteSession && (
+                        <Button
+                          type="text"
+                          size="small"
+                          icon={<CloseOutlined />}
+                          className={styles.sessionDeleteBtn}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void onDeleteSession(project.cwd, session.id);
+                          }}
+                          title="删除"
+                        />
+                      )}
+                    </div>
+                  ))}
+                </>
+              )}
             </div>
           );
         })}

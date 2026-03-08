@@ -65,6 +65,7 @@
   transition: background 140ms ease;
   position: relative;
   border-radius: 0;
+  cursor: pointer;
 }
 
 .projectRow:hover .removeBtn {
@@ -78,6 +79,17 @@
 
 .projectRowActive .projectIcon {
   color: var(--oa-accent, #0f766e);
+}
+
+.collapseArrow {
+  font-size: 10px;
+  color: var(--oa-muted, rgba(29, 37, 48, 0.4));
+  flex-shrink: 0;
+  transition: transform 200ms ease, color 140ms ease;
+}
+
+.collapseArrowOpen {
+  transform: rotate(90deg);
 }
 
 .projectIcon {

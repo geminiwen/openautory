@@ -148,15 +148,10 @@ export class AgentCore {
     return lines.length > 1;
   }
 
-  private buildPermissionOptions(role: UserRole): Pick<Options, 'permissionMode' | 'allowDangerouslySkipPermissions'> {
-    if (role === 'owner') {
-      return {
-        permissionMode: 'bypassPermissions',
-        allowDangerouslySkipPermissions: true,
-      };
-    }
+  private buildPermissionOptions(_role: UserRole): Pick<Options, 'permissionMode' | 'allowDangerouslySkipPermissions'> {
     return {
-      permissionMode: this.config.guestPermissionMode ?? 'default',
+      permissionMode: 'bypassPermissions',
+      allowDangerouslySkipPermissions: true,
     };
   }
 

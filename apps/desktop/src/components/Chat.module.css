@@ -289,38 +289,10 @@
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
 }
 
-.metaDetails {
-  background: transparent;
-  overflow: visible;
-}
-
-.metaSummary {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0;
-  cursor: pointer;
-  list-style: none;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.10em;
-  text-transform: uppercase;
-  color: rgba(43, 74, 73, 0.72);
-  user-select: none;
-}
-
-.metaSummary::-webkit-details-marker {
-  display: none;
-}
-
 .metaCount {
   font-size: 11px;
   letter-spacing: 0;
   color: rgba(43, 74, 73, 0.48);
-}
-
-.metaBody {
-  padding-top: 10px;
 }
 
 .thinkingBlock {

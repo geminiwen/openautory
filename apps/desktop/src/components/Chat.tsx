@@ -9,6 +9,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type { Components } from 'react-markdown';
 import type { ProjectInfo } from './Sidebar';
+import CollapsiblePanel from './CollapsiblePanel';
 import styles from './Chat.module.css';
 
 const markdownComponents: Components = {
@@ -191,6 +192,13 @@ export interface ParsedUserEvent {
 export function parseUserEvent(event: UserEventPayload): ParsedUserEvent | null {
   // compact 产生的合成摘要不显示
   if ((event as Record<string, unknown>).isSynthetic) return null;
+  // 跳过 SDK 内部元数据消息（与 Rust 历史加载器保持一致）
+  const raw = event as Record<string, unknown>;
+  if (raw.isMeta) return null;
+  if (raw.sourceToolAssistantUUID) return null;
+  if (raw.planContent) return null;
+  if (raw.isCompactSummary) return null;
+  if (raw.isVisibleInTranscriptOnly) return null;
   const content = event.message?.content;
   if (!content) return null;
 
@@ -593,12 +601,9 @@ export default function Chat({ cwd, sessionId: propSessionId, projectName, proje
                       case 'thinking':
                         return (
                           <div key={group.key} className={styles.metaPanel}>
-                            <details className={styles.metaDetails}>
-                              <summary className={styles.metaSummary}>Thinking</summary>
-                              <div className={styles.metaBody}>
-                                <pre className={styles.thinkingBlock}>{group.text}</pre>
-                              </div>
-                            </details>
+                            <CollapsiblePanel summary="Thinking">
+                              <pre className={styles.thinkingBlock}>{group.text}</pre>
+                            </CollapsiblePanel>
                           </div>
                         );
                       case 'text':
@@ -615,39 +620,35 @@ export default function Chat({ cwd, sessionId: propSessionId, projectName, proje
                         const lastProgress = lastTool.progress[lastTool.progress.length - 1];
                         return (
                           <div key={group.key} className={styles.metaPanel}>
-                            <details className={styles.metaDetails} onToggle={(e) => {
-                              const details = e.currentTarget;
-                              if (details.open) {
-                                const list = details.querySelector(`.${styles.toolList}`);
-                                if (list) list.scrollTop = list.scrollHeight;
+                            <CollapsiblePanel
+                              summary={
+                                <>
+                                  <span>Tool Use</span>
+                                  <span className={styles.metaCount}>{group.tools.length}</span>
+                                  {lastProgress ? (
+                                    <span className={styles.toolStatus}>{lastProgress}</span>
+                                  ) : null}
+                                </>
                               }
-                            }}>
-                              <summary className={styles.metaSummary}>
-                                <span>Tool Use</span>
-                                <span className={styles.metaCount}>{group.tools.length}</span>
-                                {lastProgress ? (
-                                  <span className={styles.toolStatus}>{lastProgress}</span>
-                                ) : null}
-                              </summary>
-                              <div className={`${styles.metaBody} ${styles.toolList}`}>
-                                {group.tools.map((toolUse) => (
-                                  <div key={toolUse.id} className={styles.toolItem}>
-                                    <div className={styles.toolHeader}>
-                                      <strong>{toolUse.name}</strong>
-                                      {toolUse.progress.length > 0 ? (
-                                        <span className={styles.toolStatus}>{toolUse.progress[toolUse.progress.length - 1]}</span>
-                                      ) : null}
-                                    </div>
-                                    {toolUse.summary ? (
-                                      <p className={styles.toolSummary}>{toolUse.summary}</p>
-                                    ) : null}
-                                    {toolUse.inputPreview ? (
-                                      <pre className={styles.toolInput}>{toolUse.inputPreview}</pre>
+                              bodyClassName={styles.toolList}
+                            >
+                              {group.tools.map((toolUse) => (
+                                <div key={toolUse.id} className={styles.toolItem}>
+                                  <div className={styles.toolHeader}>
+                                    <strong>{toolUse.name}</strong>
+                                    {toolUse.progress.length > 0 ? (
+                                      <span className={styles.toolStatus}>{toolUse.progress[toolUse.progress.length - 1]}</span>
                                     ) : null}
                                   </div>
-                                ))}
-                              </div>
-                            </details>
+                                  {toolUse.summary ? (
+                                    <p className={styles.toolSummary}>{toolUse.summary}</p>
+                                  ) : null}
+                                  {toolUse.inputPreview ? (
+                                    <pre className={styles.toolInput}>{toolUse.inputPreview}</pre>
+                                  ) : null}
+                                </div>
+                              ))}
+                            </CollapsiblePanel>
                           </div>
                         );
                       }

@@ -1,0 +1,48 @@
+.panel {
+  overflow: hidden;
+}
+
+.summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  cursor: pointer;
+  list-style: none;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: rgba(43, 74, 73, 0.72);
+  user-select: none;
+}
+
+.arrow {
+  display: inline-block;
+  font-size: 10px;
+  transition: transform 200ms ease;
+}
+
+.arrowOpen {
+  transform: rotate(90deg);
+}
+
+.bodyWrapper {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 200ms ease;
+}
+
+.bodyWrapperOpen {
+  grid-template-rows: 1fr;
+}
+
+.body {
+  overflow: hidden;
+  padding-top: 0;
+  transition: padding-top 200ms ease;
+}
+
+.bodyOpen {
+  padding-top: 10px;
+}
