@@ -1,0 +1,177 @@
+.shell {
+  position: relative;
+  height: 100%;
+  padding: 28px 20px 18px;
+}
+
+.shellMacos {
+  cursor: default;
+}
+
+.shell::before,
+.shell::after {
+  content: none;
+  position: absolute;
+  pointer-events: none;
+  border-radius: 999px;
+  filter: blur(24px);
+}
+
+.shell::before {
+  right: -120px;
+  top: 56px;
+  width: 320px;
+  height: 320px;
+  background: rgba(15, 118, 110, 0.16);
+}
+
+.shell::after {
+  left: -140px;
+  bottom: -140px;
+  width: 360px;
+  height: 360px;
+  background: rgba(211, 128, 66, 0.17);
+}
+
+.layout:global(.ant-layout) {
+  height: 100%;
+  background: transparent;
+}
+
+.titlebar {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 56px;
+  padding: 8px 8px 6px 8px;
+  border-bottom: none;
+  background: transparent;
+  user-select: none;
+  cursor: default;
+}
+
+.titlebarBrand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.titlebarLogo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 14px;
+  color: #effffc;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  background: linear-gradient(145deg, #0f766e, #139184);
+  box-shadow: 0 10px 18px rgba(15, 118, 110, 0.24);
+}
+
+.titlebarCopy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.titlebarName {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.titlebarSubtitle {
+  color: var(--oa-muted);
+  font-size: 12px;
+}
+
+.titlebarActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.actionBtn:global(.ant-btn),
+.windowBtn:global(.ant-btn) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: 11px;
+  color: rgba(29, 37, 48, 0.82);
+  background: rgba(255, 255, 255, 0.28);
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.actionBtn:global(.ant-btn):hover,
+.windowBtn:global(.ant-btn):hover {
+  color: var(--oa-accent);
+  background: rgba(255, 255, 255, 0.52);
+}
+
+.windowBtnClose:global(.ant-btn):hover {
+  color: #fff5f5;
+  background: linear-gradient(145deg, #e45858, #ce3939);
+}
+
+.content:global(.ant-layout-content) {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 2px 12px 8px;
+  background: transparent;
+}
+
+.settingsDrawer :global(.ant-drawer-content) {
+  background: linear-gradient(170deg, rgba(255, 255, 255, 0.97), rgba(234, 245, 242, 0.94));
+}
+
+.settingsDrawer :global(.ant-drawer-header) {
+  padding: 20px 24px 14px;
+  border-bottom: none;
+  background: transparent;
+}
+
+.settingsDrawer :global(.ant-drawer-body) {
+  padding: 20px 24px;
+}
+
+.settingsDrawer :global(.ant-drawer-title) {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+@media (max-width: 900px) {
+  .shell {
+    padding: 14px;
+  }
+
+  .titlebar {
+    min-height: 60px;
+    padding: 12px 14px;
+  }
+
+  .content:global(.ant-layout-content) {
+    padding: 8px 14px 14px;
+  }
+
+  .titlebarSubtitle {
+    display: none;
+  }
+}

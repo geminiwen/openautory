@@ -1,0 +1,38 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--oa-muted);
+}
+
+.form :global(.ant-form-item-label) > label {
+  font-weight: 600;
+  color: #24303c;
+}
+
+.form :global(.ant-input) {
+  border-radius: 12px;
+}
+
+.form :global(.ant-input):focus,
+.form :global(.ant-input):focus-within,
+.form :global(.ant-input-focused) {
+  border-color: rgba(15, 118, 110, 0.45);
+  box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.16);
+}
+
+.actions {
+  margin-bottom: 0;
+  padding-top: 8px;
+}
+
+.actions :global(.ant-btn) {
+  height: 44px;
+  border-radius: 12px;
+  font-weight: 700;
+}

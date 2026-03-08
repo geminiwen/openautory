@@ -1,6 +1,46 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Bubble, Sender } from '@ant-design/x';
+import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import type { Components } from 'react-markdown';
 import { getServerUrl } from './Settings';
+import styles from './Chat.module.css';
+
+const markdownComponents: Components = {
+  code({ className, children, ...props }) {
+    const match = /language-(\w+)/.exec(className ?? '');
+    if (match) {
+      return (
+        <SyntaxHighlighter
+          style={oneLight}
+          language={match[1]}
+          PreTag="div"
+          customStyle={{
+            margin: '0.6em 0',
+            borderRadius: '8px',
+            fontSize: '13px',
+            lineHeight: '1.5',
+            background: 'rgba(0,0,0,0.04)',
+          }}
+          codeTagProps={{ style: { fontFamily: "'SF Mono', Menlo, Consolas, monospace" } }}
+        >
+          {String(children).replace(/\n$/, '')}
+        </SyntaxHighlighter>
+      );
+    }
+    return (
+      <code className={className} {...props}>
+        {children}
+      </code>
+    );
+  },
+};
+
+const renderMarkdown = (content: string) => (
+  <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{content}</Markdown>
+);
 
 interface ToolUseTrace {
   id: string;
@@ -235,6 +275,11 @@ function groupBlocks(blocks: ContentBlock[]): RenderGroup[] {
   return groups;
 }
 
+const aiBubbleClassNames = {
+  root: styles.aiBubbleRoot,
+  content: styles.aiBubbleContent,
+};
+
 export default function Chat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
@@ -381,19 +426,19 @@ export default function Chat() {
   }, [appendAssistantPayload, appendToolProgressPayload, appendToolSummaryPayload, finishRequest, loading]);
 
   return (
-    <div className="chat-surface">
-      <div className="chat-stream">
+    <div className={styles.surface}>
+      <div className={styles.stream}>
         {messages.length === 0 ? (
-          <section className="chat-empty">
-            <p className="chat-empty-kicker">OpenAutory Assistant</p>
-            <h2 className="chat-empty-title">Ask for architecture, code, or delivery help.</h2>
-            <p className="chat-empty-copy">Choose a prompt or write your own request below.</p>
-            <div className="prompt-grid">
+          <section className={styles.empty}>
+            <p className={styles.emptyKicker}>OpenAutory Assistant</p>
+            <h2 className={styles.emptyTitle}>Ask for architecture, code, or delivery help.</h2>
+            <p className={styles.emptyCopy}>Choose a prompt or write your own request below.</p>
+            <div className={styles.promptGrid}>
               {STARTER_PROMPTS.map((prompt) => (
                 <button
                   key={prompt}
                   type="button"
-                  className="prompt-chip"
+                  className={styles.promptChip}
                   onClick={() => handleSubmit(prompt)}
                   disabled={loading}
                 >
@@ -404,14 +449,14 @@ export default function Chat() {
           </section>
         ) : null}
 
-        <div className="oa-message-list">
+        <div className={styles.messageList}>
           {messages.map((message) => {
             if (message.role === 'user') {
               return (
-                <div key={message.key} className="oa-message-entry oa-message-entry-user">
-                  <div className="oa-message-row oa-message-row-user">
-                    <div className="oa-message-bubble oa-message-bubble-user">
-                      <div className="oa-message-text">{message.content}</div>
+                <div key={message.key} className={`${styles.entry} ${styles.entryUser}`}>
+                  <div className={`${styles.row} ${styles.rowUser}`}>
+                    <div className={`${styles.bubble} ${styles.bubbleUser}`}>
+                      <div className={styles.bubbleText}>{message.content}</div>
                     </div>
                   </div>
                 </div>
@@ -419,16 +464,13 @@ export default function Chat() {
             }
 
             return (
-              <div key={message.key} className="oa-message-entry oa-message-entry-ai">
+              <div key={message.key} className={`${styles.entry} ${styles.entryAi}`}>
                 {message.blocks.length === 0 && message.loading ? (
-                  <div className="oa-message-row oa-message-row-ai">
+                  <div className={`${styles.row} ${styles.rowAi}`}>
                     <Bubble
                       loading
                       content={undefined}
-                      classNames={{
-                        root: 'oa-bubble-ai-root',
-                        content: 'oa-bubble-ai-content',
-                      }}
+                      classNames={aiBubbleClassNames}
                     />
                   </div>
                 ) : (
@@ -436,24 +478,21 @@ export default function Chat() {
                     switch (group.type) {
                       case 'thinking':
                         return (
-                          <div key={group.key} className="oa-meta-panel-wrap oa-meta-panel-wrap-thinking">
-                            <details className="oa-meta-panel">
-                              <summary className="oa-meta-summary">Thinking</summary>
-                              <div className="oa-meta-body">
-                                <pre className="oa-thinking-block">{group.text}</pre>
+                          <div key={group.key} className={styles.metaPanel}>
+                            <details className={styles.metaDetails}>
+                              <summary className={styles.metaSummary}>Thinking</summary>
+                              <div className={styles.metaBody}>
+                                <pre className={styles.thinkingBlock}>{group.text}</pre>
                               </div>
                             </details>
                           </div>
                         );
                       case 'text':
                         return (
-                          <div key={group.key} className="oa-message-row oa-message-row-ai">
+                          <div key={group.key} className={`${styles.row} ${styles.rowAi}`}>
                             <Bubble
-                              content={group.text || undefined}
-                              classNames={{
-                                root: 'oa-bubble-ai-root',
-                                content: 'oa-bubble-ai-content',
-                              }}
+                              content={renderMarkdown(group.text || '')}
+                              classNames={aiBubbleClassNames}
                             />
                           </div>
                         );
@@ -461,35 +500,35 @@ export default function Chat() {
                         const lastTool = group.tools[group.tools.length - 1]!;
                         const lastProgress = lastTool.progress[lastTool.progress.length - 1];
                         return (
-                          <div key={group.key} className="oa-meta-panel-wrap oa-meta-panel-wrap-tools">
-                            <details className="oa-meta-panel" onToggle={(e) => {
+                          <div key={group.key} className={styles.metaPanel}>
+                            <details className={styles.metaDetails} onToggle={(e) => {
                               const details = e.currentTarget;
                               if (details.open) {
-                                const list = details.querySelector('.oa-tool-list');
+                                const list = details.querySelector(`.${styles.toolList}`);
                                 if (list) list.scrollTop = list.scrollHeight;
                               }
                             }}>
-                              <summary className="oa-meta-summary">
+                              <summary className={styles.metaSummary}>
                                 <span>Tool Use</span>
-                                <span className="oa-meta-count">{group.tools.length}</span>
+                                <span className={styles.metaCount}>{group.tools.length}</span>
                                 {lastProgress ? (
-                                  <span className="oa-tool-status">{lastProgress}</span>
+                                  <span className={styles.toolStatus}>{lastProgress}</span>
                                 ) : null}
                               </summary>
-                              <div className="oa-meta-body oa-tool-list">
+                              <div className={`${styles.metaBody} ${styles.toolList}`}>
                                 {group.tools.map((toolUse) => (
-                                  <div key={toolUse.id} className="oa-tool-item">
-                                    <div className="oa-tool-header">
+                                  <div key={toolUse.id} className={styles.toolItem}>
+                                    <div className={styles.toolHeader}>
                                       <strong>{toolUse.name}</strong>
                                       {toolUse.progress.length > 0 ? (
-                                        <span className="oa-tool-status">{toolUse.progress[toolUse.progress.length - 1]}</span>
+                                        <span className={styles.toolStatus}>{toolUse.progress[toolUse.progress.length - 1]}</span>
                                       ) : null}
                                     </div>
                                     {toolUse.summary ? (
-                                      <p className="oa-tool-summary">{toolUse.summary}</p>
+                                      <p className={styles.toolSummary}>{toolUse.summary}</p>
                                     ) : null}
                                     {toolUse.inputPreview ? (
-                                      <pre className="oa-tool-input">{toolUse.inputPreview}</pre>
+                                      <pre className={styles.toolInput}>{toolUse.inputPreview}</pre>
                                     ) : null}
                                   </div>
                                 ))}
@@ -502,14 +541,11 @@ export default function Chat() {
                   })
                 )}
                 {message.loading && message.blocks.length > 0 ? (
-                  <div className="oa-message-row oa-message-row-ai">
+                  <div className={`${styles.row} ${styles.rowAi}`}>
                     <Bubble
                       loading
                       content={undefined}
-                      classNames={{
-                        root: 'oa-bubble-ai-root',
-                        content: 'oa-bubble-ai-content',
-                      }}
+                      classNames={aiBubbleClassNames}
                     />
                   </div>
                 ) : null}
@@ -520,10 +556,10 @@ export default function Chat() {
         </div>
       </div>
 
-      <div className="chat-input-wrap">
+      <div className={styles.inputWrap}>
         <Sender
-          rootClassName="oa-sender"
-          classNames={{ input: 'oa-sender-input' }}
+          rootClassName={styles.sender}
+          classNames={{ input: styles.senderInput }}
           onSubmit={handleSubmit}
           loading={loading}
           placeholder="Type your request and press Enter"

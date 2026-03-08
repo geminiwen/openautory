@@ -10,6 +10,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Button, ConfigProvider, Drawer, Layout } from 'antd';
 import Chat from './components/Chat';
 import Settings from './components/Settings';
+import styles from './App.module.css';
 
 const { Content } = Layout;
 const appWindow = getCurrentWindow();
@@ -87,22 +88,22 @@ export default function App() {
   return (
     <ConfigProvider theme={appTheme}>
       <div
-        className={`app-shell${isMacLike ? ' app-shell-macos' : ''}`}
+        className={`${styles.shell}${isMacLike ? ` ${styles.shellMacos}` : ''}`}
         onMouseDown={handleShellMouseDown}
       >
-        <Layout className="app-layout">
-            <header className="app-titlebar" onMouseDown={handleTitlebarMouseDown}>
-              <div className="app-titlebar-brand">
-                <span className="app-titlebar-logo">OA</span>
-                <div className="app-titlebar-copy">
-                  <span className="app-titlebar-name">OpenAutory</span>
-                  <span className="app-titlebar-subtitle">Desktop Workspace</span>
+        <Layout className={styles.layout}>
+            <header className={styles.titlebar} onMouseDown={handleTitlebarMouseDown}>
+              <div className={styles.titlebarBrand}>
+                <span className={styles.titlebarLogo}>OA</span>
+                <div className={styles.titlebarCopy}>
+                  <span className={styles.titlebarName}>OpenAutory</span>
+                  <span className={styles.titlebarSubtitle}>Desktop Workspace</span>
                 </div>
               </div>
 
-              <div className="app-titlebar-actions" data-no-drag="true">
+              <div className={styles.titlebarActions} data-no-drag="true">
                 <Button
-                  className="titlebar-action-button"
+                  className={styles.actionBtn}
                   icon={<SettingOutlined />}
                   type="text"
                   onClick={() => setSettingsOpen(true)}
@@ -111,19 +112,19 @@ export default function App() {
                 {!isMacLike ? (
                   <>
                     <Button
-                      className="titlebar-window-button"
+                      className={styles.windowBtn}
                       icon={<MinusOutlined />}
                       type="text"
                       onClick={handleMinimize}
                     />
                     <Button
-                      className="titlebar-window-button"
+                      className={styles.windowBtn}
                       icon={isMaximized ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
                       type="text"
                       onClick={handleToggleMaximize}
                     />
                     <Button
-                      className="titlebar-window-button titlebar-window-button-close"
+                      className={`${styles.windowBtn} ${styles.windowBtnClose}`}
                       icon={<CloseOutlined />}
                       type="text"
                       onClick={handleClose}
@@ -133,12 +134,12 @@ export default function App() {
               </div>
             </header>
 
-          <Content className="app-content">
+          <Content className={styles.content}>
             <Chat />
           </Content>
 
           <Drawer
-            className="settings-drawer"
+            className={styles.settingsDrawer}
             title="Connection Settings"
             open={settingsOpen}
             onClose={() => setSettingsOpen(false)}

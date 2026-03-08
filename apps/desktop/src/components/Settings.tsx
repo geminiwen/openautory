@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Button, Form, Input, message } from 'antd';
+import styles from './Settings.module.css';
 
 const STORAGE_KEY = 'openautory:serverUrl';
 const DEFAULT_URL = 'ws://localhost:3000/ws';
@@ -19,15 +20,15 @@ export default function Settings() {
   }
 
   return (
-    <div className="settings-panel">
-      <p className="settings-hint">
+    <div className={styles.panel}>
+      <p className={styles.hint}>
         Configure the WebSocket endpoint used by this desktop client.
       </p>
 
       <Form
         form={form}
         layout="vertical"
-        className="settings-form"
+        className={styles.form}
         initialValues={{ serverUrl: localStorage.getItem(STORAGE_KEY) ?? DEFAULT_URL }}
         onValuesChange={() => setSaved(false)}
         onFinish={handleSave}
@@ -51,7 +52,7 @@ export default function Settings() {
           <Input placeholder="ws://localhost:3000/ws" size="large" />
         </Form.Item>
 
-        <Form.Item className="settings-actions">
+        <Form.Item className={styles.actions}>
           <Button type="primary" htmlType="submit" size="large" block>
             {saved ? 'Saved' : 'Save Changes'}
           </Button>
