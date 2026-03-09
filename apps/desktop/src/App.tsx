@@ -219,12 +219,6 @@ export default function App() {
     };
   }, []);
 
-  const refreshProjects = useCallback(async () => {
-    const list = await invoke<ProjectInfo[]>('list_projects');
-    setProjects(list);
-    return list;
-  }, []);
-
   // Initialize: load projects
   useEffect(() => {
     void invoke<ProjectInfo[]>('list_projects').then(setProjects);

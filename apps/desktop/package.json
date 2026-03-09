@@ -31,6 +31,8 @@
     "@tauri-apps/plugin-opener": "^2.5.3",
     "@testing-library/react": "^16.3.2",
     "@testing-library/react-hooks": "^8.0.1",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^4",
     "jsdom": "^28.1.0",
     "typescript": "^5.7",

@@ -50,7 +50,6 @@ function formatRelativeTime(ms: number): string {
 
 export default function Sidebar({
   projects,
-  activeCwd,
   activeSessionId,
   onNewThread,
   onSelectSession,

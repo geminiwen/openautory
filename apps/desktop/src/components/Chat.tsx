@@ -191,9 +191,9 @@ export interface ParsedUserEvent {
 /** 解析 SDK user event 为 UserMessage，返回 null 表示应跳过 */
 export function parseUserEvent(event: UserEventPayload): ParsedUserEvent | null {
   // compact 产生的合成摘要不显示
-  if ((event as Record<string, unknown>).isSynthetic) return null;
+  if ((event as unknown as Record<string, unknown>).isSynthetic) return null;
   // 跳过 SDK 内部元数据消息（与 Rust 历史加载器保持一致）
-  const raw = event as Record<string, unknown>;
+  const raw = event as unknown as Record<string, unknown>;
   if (raw.isMeta) return null;
   if (raw.sourceToolAssistantUUID) return null;
   if (raw.planContent) return null;
@@ -390,7 +390,7 @@ function historyToMessages(history: HistoryMsg[]): Message[] {
     }
     merged.push(m.role === 'user' ? { ...m } : m);
   }
-  return merged.flatMap((m) => {
+  return merged.flatMap((m): Message[] => {
     if (m.role === 'user') {
       return [{ key: nextKey(), role: 'user' as const, content: m.text, subtext: m.subtext }];
     }
