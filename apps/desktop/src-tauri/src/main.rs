@@ -584,6 +584,7 @@ use tauri_plugin_shell::ShellExt;
 
 /// 统一封装 dev（std::process::Child）和 release（sidecar CommandChild）两种句柄
 enum ServerHandle {
+    #[cfg(debug_assertions)]
     Dev(std::process::Child),
     #[cfg(not(debug_assertions))]
     Sidecar(tauri_plugin_shell::process::CommandChild),
@@ -592,6 +593,7 @@ enum ServerHandle {
 impl ServerHandle {
     fn kill(self) {
         match self {
+            #[cfg(debug_assertions)]
             Self::Dev(mut child) => {
                 #[cfg(unix)]
                 {
