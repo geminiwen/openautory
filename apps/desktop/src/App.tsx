@@ -299,6 +299,10 @@ export default function App() {
 
   const handleDeleteSession = useCallback(
     async (cwd: string, sessionId: string) => {
+      // 删除前记录被删 session 在当前列表中的索引
+      const oldProject = projects.find((p) => p.cwd === cwd);
+      const oldIndex = oldProject?.sessions.findIndex((s) => s.id === sessionId) ?? -1;
+
       await invoke('delete_session', { sessionId, cwd });
       const list = await invoke<ProjectInfo[]>('list_projects');
       setProjects(list);
@@ -308,12 +312,20 @@ export default function App() {
         return next;
       });
       if (selectedSessionId === sessionId) {
+        // 删除 session[n] 后选 session[n]（即原来的 n+1）；
+        // 若删的是末尾则选新末尾（即原来的 n-1）
+        const newProject = list.find((p) => p.cwd === cwd);
+        const sessions = newProject?.sessions ?? [];
+        const nextSession =
+          sessions.length === 0
+            ? null
+            : (sessions[Math.min(oldIndex, sessions.length - 1)]?.id ?? null);
         switchWithTransition(() => {
-          setSelectedSessionId(null);
+          setSelectedSessionId(nextSession);
         });
       }
     },
-    [selectedSessionId, switchWithTransition],
+    [selectedSessionId, switchWithTransition, projects],
   );
 
   const handleRemoveProject = useCallback(

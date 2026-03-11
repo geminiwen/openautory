@@ -227,7 +227,7 @@ export function parseUserEvent(event: UserEventPayload): ParsedUserEvent | null 
       const cmd = extractXmlTag(text, 'command-name') ?? extractXmlTag(text, 'command-message') ?? '';
       const args = extractXmlTag(text, 'command-args') ?? '';
       text = args ? `${cmd} ${args}` : cmd;
-      if (!text) return null;
+      if (!text || text.startsWith('/')) return null;
     } else if (text.startsWith('<local-command-stdout>')) {
       text = extractXmlTag(text, 'local-command-stdout') ?? text;
       isCommandOutput = true;
