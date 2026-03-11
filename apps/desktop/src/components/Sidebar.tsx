@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CloseOutlined, FolderAddOutlined, FolderOpenOutlined, FolderOutlined, PlusOutlined, RightOutlined } from '@ant-design/icons';
+import { CloseOutlined, FolderAddOutlined, FolderOpenOutlined, FolderOutlined, PlusOutlined, RightOutlined, SettingOutlined } from '@ant-design/icons';
 import { Button, Dropdown } from 'antd';
 import { homeDir } from '@tauri-apps/api/path';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
@@ -35,6 +35,7 @@ interface SidebarProps {
   onAddProject: () => void | Promise<void>;
   onRemoveProject: (cwd: string) => void | Promise<void>;
   onDeleteSession?: (cwd: string, sessionId: string) => void | Promise<void>;
+  onProjectSettings?: (cwd: string) => void;
 }
 
 function formatRelativeTime(ms: number): string {
@@ -56,6 +57,7 @@ export default function Sidebar({
   onAddProject,
   onRemoveProject,
   onDeleteSession,
+  onProjectSettings,
 }: SidebarProps) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
@@ -95,6 +97,12 @@ export default function Sidebar({
                       icon: <FolderOpenOutlined />,
                       label: 'View in Finder',
                       onClick: () => void revealProject(project.cwd),
+                    },
+                    {
+                      key: 'settings',
+                      icon: <SettingOutlined />,
+                      label: '项目设置',
+                      onClick: () => onProjectSettings?.(project.cwd),
                     },
                     ...(!isDefault ? [
                       { type: 'divider' as const },

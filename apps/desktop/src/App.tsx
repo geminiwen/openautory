@@ -25,6 +25,7 @@ import Chat, {
   updateBlockToolSummary,
 } from './components/Chat';
 import LogPanel from './components/LogPanel';
+import ProjectSettings from './components/ProjectSettings';
 import Sidebar, { type ProjectInfo } from './components/Sidebar';
 import { useWebSocket } from './hooks/useWebSocket';
 import { getServerUrl } from './components/Settings';
@@ -49,6 +50,7 @@ const appTheme = {
 export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [logPanelOpen, setLogPanelOpen] = useState(false);
+  const [projectSettingsCwd, setProjectSettingsCwd] = useState<string | null>(null);
   const [isMaximized, setIsMaximized] = useState(false);
   const isMacLike = useMemo(() => /Mac|iPhone|iPad|iPod/.test(navigator.userAgent), []);
 
@@ -437,6 +439,7 @@ export default function App() {
               onAddProject={handleAddProject}
               onRemoveProject={handleRemoveProject}
               onDeleteSession={handleDeleteSession}
+              onProjectSettings={setProjectSettingsCwd}
             />
             <div
               className={`${styles.chatArea} ${chatExiting ? styles.chatExit : styles.chatEnter}`}
@@ -470,6 +473,14 @@ export default function App() {
           >
             <p style={{ color: 'rgba(29,37,48,0.45)', fontSize: 13 }}>暂无可配置项。</p>
           </Drawer>
+
+          <ProjectSettings
+            cwd={projectSettingsCwd ?? ''}
+            projectName={projects.find((p) => p.cwd === projectSettingsCwd)?.name ?? ''}
+            open={!!projectSettingsCwd}
+            onClose={() => setProjectSettingsCwd(null)}
+            wsSend={wsSend}
+          />
         </Layout>
       </div>
     </ConfigProvider>

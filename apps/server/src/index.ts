@@ -7,6 +7,8 @@ import { createLogger } from '@openautory/logger';
 import { HttpAdapter } from '@openautory/adapter-http';
 import { buildMcpRegistry } from './mcp/index.js';
 import { config } from './config.js';
+// @ts-ignore — embed uses Bun-specific `import ... with { type: 'file' }`, only works in bun build --compile
+import cliPath from '@anthropic-ai/claude-agent-sdk/embed';
 
 interface WsData {
   connectionId: string;
@@ -49,8 +51,31 @@ function expandHome(cwd: string): string {
 
 const agentCache = new Map<string, AgentCore>();
 
+/**
+ * 读取项目目录下的 .mcp.json，返回 mcpServers 字段（Claude Code 规范）。
+ * 文件不存在或解析失败时返回空对象。
+ */
+function loadProjectMcpServers(cwd: string): Record<string, import('@openautory/core').McpServerConfig> {
+  const configPath = path.join(cwd, '.mcp.json');
+  try {
+    if (!fs.existsSync(configPath)) return {};
+    const raw = fs.readFileSync(configPath, 'utf-8');
+    const parsed = JSON.parse(raw) as { mcpServers?: Record<string, import('@openautory/core').McpServerConfig> };
+    if (parsed.mcpServers && typeof parsed.mcpServers === 'object') {
+      logger.info('Loaded project MCP config', { cwd, servers: Object.keys(parsed.mcpServers) });
+      return parsed.mcpServers;
+    }
+  } catch (err) {
+    logger.warn('Failed to load .mcp.json', { cwd, err: String(err) });
+  }
+  return {};
+}
+
 function getAgent(cwd: string): AgentCore {
   if (!agentCache.has(cwd)) {
+    const projectMcpServers = loadProjectMcpServers(cwd);
+    const mergedMcpServers = { ...mcpServers, ...projectMcpServers };
+
     agentCache.set(cwd, new AgentCore({
       ...(config.anthropic.model ? { model: config.anthropic.model } : {}),
       ...(config.anthropic.appendSystemPrompt ? { appendSystemPrompt: config.anthropic.appendSystemPrompt } : {}),
@@ -58,7 +83,8 @@ function getAgent(cwd: string): AgentCore {
       ...(config.anthropic.allowedTools ? { allowedTools: config.anthropic.allowedTools } : {}),
       ...(config.anthropic.guestPermissionMode ? { guestPermissionMode: config.anthropic.guestPermissionMode } : {}),
       persistSession: true,
-      mcpServers,
+      mcpServers: mergedMcpServers,
+      ...(typeof cliPath === 'string' && cliPath ? { pathToClaudeCodeExecutable: cliPath } : {}),
     }));
   }
   return agentCache.get(cwd)!;
@@ -109,6 +135,18 @@ const server = Bun.serve<WsData>({
       try {
         parsed = JSON.parse(String(rawData));
       } catch {
+        return;
+      }
+
+      // 处理重载 agent（项目 MCP 配置变更后）
+      if (parsed.type === 'reload_agent') {
+        const rawCwd = (parsed as { cwd?: string }).cwd;
+        if (rawCwd) {
+          const resolvedCwd = expandHome(rawCwd);
+          agentCache.delete(resolvedCwd);
+          logger.info('Agent cache cleared for reload', { cwd: resolvedCwd });
+          ws.send(JSON.stringify({ type: 'agent_reloaded', cwd: rawCwd }));
+        }
         return;
       }
 

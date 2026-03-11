@@ -56,6 +56,12 @@ export interface AgentConfig {
    * 默认：['user', 'project', 'local']
    */
   settingSources?: SettingSource[];
+  /**
+   * Claude Code CLI 可执行文件路径。
+   * 用于 bun build --compile 场景：从 embed 导入解压后的 cli.js 路径传入。
+   * 不传则由 SDK 自动查找。
+   */
+  pathToClaudeCodeExecutable?: string;
 }
 
 export type AgentMessageEvent = SDKMessage;
@@ -110,9 +116,10 @@ export class AgentCore {
       ...(persist && msg.sessionId ? { resume: msg.sessionId } : {}),
       ...(this.config.mcpServers ? { mcpServers: this.config.mcpServers } : {}),
       settingSources: this.config.settingSources ?? ['user', 'project', 'local'],
+      ...(this.config.pathToClaudeCodeExecutable ? { pathToClaudeCodeExecutable: this.config.pathToClaudeCodeExecutable } : {}),
       ...(abortController ? { abortController } : {}),
       stderr: (data: string) => {
-        this.logger.error('SDK stderr', { data: data.trimEnd() });
+        this.logger.error('Claude stderr', { data: data.trimEnd() });
       },
     };
 

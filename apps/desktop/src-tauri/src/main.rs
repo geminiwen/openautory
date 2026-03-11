@@ -215,6 +215,263 @@ fn derive_session_preview(content: &[u8]) -> String {
     truncate_chars(&preview, SESSION_PREVIEW_MAX_CHARS)
 }
 
+// ── MCP config ────────────────────────────────────────────────────────────────
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct McpConfig {
+    #[serde(rename = "mcpServers", default)]
+    mcp_servers: serde_json::Value,
+}
+
+#[tauri::command]
+fn read_mcp_config(cwd: String) -> Result<McpConfig, String> {
+    let expanded = expand_home(&cwd)?;
+    let config_path = expanded.join(".mcp.json");
+    if !config_path.exists() {
+        return Ok(McpConfig { mcp_servers: serde_json::json!({}) });
+    }
+    let content = std::fs::read_to_string(&config_path)
+        .map_err(|e| format!("Cannot read .mcp.json: {e}"))?;
+    let config: McpConfig = serde_json::from_str(&content)
+        .map_err(|e| format!("Invalid .mcp.json: {e}"))?;
+    Ok(config)
+}
+
+#[tauri::command]
+fn write_mcp_config(cwd: String, config: McpConfig) -> Result<(), String> {
+    let expanded = expand_home(&cwd)?;
+    let config_path = expanded.join(".mcp.json");
+    let json = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("Cannot serialize config: {e}"))?;
+    std::fs::write(&config_path, json)
+        .map_err(|e| format!("Cannot write .mcp.json: {e}"))?;
+    log::info!("MCP config written to {}", config_path.display());
+    Ok(())
+}
+
+// ── skills ────────────────────────────────────────────────────────────────────
+
+#[derive(serde::Serialize)]
+struct SkillInfo {
+    name: String,
+    description: String,
+    content: String,
+}
+
+fn parse_frontmatter(raw: &str) -> (String, String) {
+    // Extract description from ---\n...\n--- frontmatter block
+    if !raw.starts_with("---") {
+        return (String::new(), String::new());
+    }
+    let after_first = &raw[3..];
+    let Some(end_idx) = after_first.find("\n---") else {
+        return (String::new(), String::new());
+    };
+    let fm_block = &after_first[..end_idx];
+    let mut name = String::new();
+    let mut description = String::new();
+    for line in fm_block.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("name:") {
+            name = rest.trim().trim_matches('"').trim_matches('\'').to_string();
+        } else if let Some(rest) = trimmed.strip_prefix("description:") {
+            description = rest.trim().trim_matches('"').trim_matches('\'').to_string();
+        }
+    }
+    (name, description)
+}
+
+#[tauri::command]
+fn list_skills(cwd: String) -> Result<Vec<SkillInfo>, String> {
+    let expanded = expand_home(&cwd)?;
+    let skills_dir = expanded.join(".claude").join("skills");
+    if !skills_dir.exists() {
+        return Ok(vec![]);
+    }
+    let mut skills = Vec::new();
+    let entries = std::fs::read_dir(&skills_dir)
+        .map_err(|e| format!("Cannot read skills directory: {e}"))?;
+    for entry in entries {
+        let Ok(entry) = entry else { continue };
+        let path = entry.path();
+        if !path.is_dir() { continue; }
+        let skill_file = path.join("SKILL.md");
+        if !skill_file.exists() { continue; }
+        let dir_name = path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+        let content = std::fs::read_to_string(&skill_file)
+            .map_err(|e| format!("Cannot read {}: {e}", skill_file.display()))?;
+        let (_name, description) = parse_frontmatter(&content);
+        skills.push(SkillInfo {
+            name: dir_name,
+            description,
+            content,
+        });
+    }
+    skills.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(skills)
+}
+
+#[tauri::command]
+fn write_skill(cwd: String, name: String, content: String) -> Result<(), String> {
+    let expanded = expand_home(&cwd)?;
+    let skill_dir = expanded.join(".claude").join("skills").join(&name);
+    std::fs::create_dir_all(&skill_dir)
+        .map_err(|e| format!("Cannot create skill directory: {e}"))?;
+    let skill_file = skill_dir.join("SKILL.md");
+    std::fs::write(&skill_file, &content)
+        .map_err(|e| format!("Cannot write SKILL.md: {e}"))?;
+    log::info!("Skill written: {} (cwd={})", name, cwd);
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_skill(cwd: String, name: String) -> Result<(), String> {
+    let expanded = expand_home(&cwd)?;
+    let skill_dir = expanded.join(".claude").join("skills").join(&name);
+    if skill_dir.exists() {
+        std::fs::remove_dir_all(&skill_dir)
+            .map_err(|e| format!("Cannot delete skill directory: {e}"))?;
+    }
+    log::info!("Skill deleted: {} (cwd={})", name, cwd);
+    Ok(())
+}
+
+#[tauri::command]
+async fn import_skills_zip(cwd: String, source: String, path: String) -> Result<Vec<String>, String> {
+    let expanded = expand_home(&cwd)?;
+    let skills_dir = expanded.join(".claude").join("skills");
+    std::fs::create_dir_all(&skills_dir)
+        .map_err(|e| format!("Cannot create skills directory: {e}"))?;
+
+    let zip_bytes: Vec<u8> = if source == "url" {
+        reqwest::blocking::get(&path)
+            .map_err(|e| format!("Download failed: {e}"))?
+            .bytes()
+            .map_err(|e| format!("Failed to read response: {e}"))?
+            .to_vec()
+    } else {
+        std::fs::read(&path)
+            .map_err(|e| format!("Cannot read ZIP file: {e}"))?
+    };
+
+    let cursor = std::io::Cursor::new(&zip_bytes);
+    let mut archive = zip::ZipArchive::new(cursor)
+        .map_err(|e| format!("Invalid ZIP file: {e}"))?;
+
+    // ── Validation pass: collect top-level dirs and check structure ──────
+    let mut top_level_dirs: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut has_skill_md = false;
+
+    for i in 0..archive.len() {
+        let file = archive.by_index(i)
+            .map_err(|e| format!("Cannot read ZIP entry: {e}"))?;
+        let Some(enclosed_name) = file.enclosed_name().map(|p| p.to_path_buf()) else {
+            return Err("ZIP 包含不安全的路径".to_string());
+        };
+
+        let components: Vec<_> = enclosed_name.components().collect();
+        if components.is_empty() { continue; }
+
+        // Record top-level directory name
+        let top = components[0].as_os_str().to_str().unwrap_or("").to_string();
+        if top.is_empty() { continue; }
+
+        // Skip macOS resource fork directory
+        if top == "__MACOSX" { continue; }
+
+        // Skip directory entries themselves (e.g. "skill-name/")
+        if file.is_dir() {
+            top_level_dirs.insert(top);
+            continue;
+        }
+
+        // All files must be under a single top-level directory
+        if components.len() < 2 {
+            return Err(format!(
+                "ZIP 结构不合法：文件 \"{}\" 不在子目录中。ZIP 应包含一个文件夹，文件夹内至少有 SKILL.md",
+                enclosed_name.display()
+            ));
+        }
+
+        top_level_dirs.insert(top);
+
+        let file_name = enclosed_name.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+        if file_name == "SKILL.md" {
+            has_skill_md = true;
+        }
+    }
+
+    if top_level_dirs.is_empty() {
+        return Err("ZIP 文件为空".to_string());
+    }
+    if top_level_dirs.len() != 1 {
+        return Err(format!(
+            "ZIP 结构不合法：应只包含一个文件夹，但发现了 {} 个顶层目录：{}",
+            top_level_dirs.len(),
+            top_level_dirs.into_iter().collect::<Vec<_>>().join(", ")
+        ));
+    }
+    if !has_skill_md {
+        return Err("ZIP 结构不合法：文件夹内缺少 SKILL.md".to_string());
+    }
+
+    let skill_name = top_level_dirs.into_iter().next().unwrap();
+
+    // Validate skill name format
+    if !skill_name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        || skill_name.starts_with('-')
+    {
+        return Err(format!(
+            "Skill 名称不合法：\"{}\"，仅限小写字母、数字和连字符",
+            skill_name
+        ));
+    }
+
+    // ── Extract pass ────────────────────────────────────────────────────────
+    let cursor2 = std::io::Cursor::new(&zip_bytes);
+    let mut archive2 = zip::ZipArchive::new(cursor2)
+        .map_err(|e| format!("Invalid ZIP file: {e}"))?;
+
+    let target_dir = skills_dir.join(&skill_name);
+    std::fs::create_dir_all(&target_dir)
+        .map_err(|e| format!("Cannot create directory: {e}"))?;
+
+    for i in 0..archive2.len() {
+        let mut file = archive2.by_index(i)
+            .map_err(|e| format!("Cannot read ZIP entry: {e}"))?;
+        if file.is_dir() { continue; }
+        let Some(enclosed_name) = file.enclosed_name().map(|p| p.to_path_buf()) else { continue };
+
+        // Strip the top-level directory prefix, write remaining path under target_dir
+        let components: Vec<_> = enclosed_name.components().collect();
+        if components.len() < 2 { continue; }
+
+        // Skip macOS resource fork directory
+        let top = components[0].as_os_str().to_str().unwrap_or("");
+        if top == "__MACOSX" { continue; }
+        let rel_path: PathBuf = components[1..].iter().collect();
+        let target_file = target_dir.join(&rel_path);
+
+        if let Some(parent) = target_file.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Cannot create directory: {e}"))?;
+        }
+
+        let mut out = std::fs::File::create(&target_file)
+            .map_err(|e| format!("Cannot create file: {e}"))?;
+        std::io::copy(&mut file, &mut out)
+            .map_err(|e| format!("Cannot write file: {e}"))?;
+    }
+
+    log::info!("Imported skill \"{}\" from ZIP (cwd={})", skill_name, cwd);
+    Ok(vec![skill_name])
+}
+
 // ── commands ──────────────────────────────────────────────────────────────────
 
 /// 恢复或新建 session：
@@ -683,6 +940,12 @@ fn main() {
             pick_folder,
             delete_session,
             read_session_messages,
+            read_mcp_config,
+            write_mcp_config,
+            list_skills,
+            write_skill,
+            delete_skill,
+            import_skills_zip,
         ])
         .setup(|app| {
             // Ctrl+C → app_handle.exit(0) → RunEvent::Exit → cleanup
