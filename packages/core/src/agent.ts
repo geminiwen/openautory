@@ -99,6 +99,7 @@ export class AgentCore {
     this.logger.info('processMessageStream start', { sessionId: msg.sessionId, persist, cwd: this.config.cwd });
 
     const options: Options = {
+      debug: true,
       ...(this.config.model ? { model: this.config.model } : {}),
       ...this.buildSystemPromptOption(),
       ...(this.config.maxTurns !== undefined ? { maxTurns: this.config.maxTurns } : {}),
@@ -110,6 +111,9 @@ export class AgentCore {
       ...(this.config.mcpServers ? { mcpServers: this.config.mcpServers } : {}),
       settingSources: this.config.settingSources ?? ['user', 'project', 'local'],
       ...(abortController ? { abortController } : {}),
+      stderr: (data: string) => {
+        this.logger.error('SDK stderr', { data: data.trimEnd() });
+      },
     };
 
     this.logger.info('query options', {
@@ -123,8 +127,13 @@ export class AgentCore {
 
     try {
       for await (const event of q) {
-        const { type, subtype } = event as { type: string; subtype?: string };
-        this.logger.debug('SDK event', { type, subtype });
+        const { type, subtype, is_error } = event as { type: string; subtype?: string; is_error?: boolean };
+        const isError = is_error || (subtype && subtype.startsWith('error_'));
+        if (isError) {
+          this.logger.error('SDK event', { type, subtype, is_error });
+        } else {
+          this.logger.debug('SDK event', { type, subtype });
+        }
 
         yield event;
       }

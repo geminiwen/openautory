@@ -2,8 +2,14 @@
 
 use std::path::PathBuf;
 use std::sync::Mutex;
-use tauri::{Manager, RunEvent};
+use tauri::{Emitter, Manager, RunEvent};
 use tauri_plugin_log::{Target, TargetKind};
+
+#[derive(Clone, serde::Serialize)]
+struct ServerLog {
+    stream: String,
+    line: String,
+}
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -577,6 +583,34 @@ fn read_session_messages(session_id: String, cwd: String) -> Result<Vec<serde_js
     Ok(messages)
 }
 
+// ── shell PATH resolution ─────────────────────────────────────────────────────
+
+/// 从用户的 login shell（zsh / bash）中读取 PATH 环境变量。
+/// macOS GUI 应用不继承终端 shell 的 PATH，需要主动获取。
+fn get_shell_path() -> Option<String> {
+    for shell in &["zsh", "bash"] {
+        if let Ok(output) = std::process::Command::new(shell)
+            .args(["-ilc", "echo $PATH"])
+            .stderr(std::process::Stdio::null())
+            .output()
+        {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                // 取最后一行非空内容（interactive shell 可能输出其他内容）
+                if let Some(path) = stdout.lines().rev().find(|l| !l.trim().is_empty()) {
+                    let path = path.trim();
+                    if !path.is_empty() {
+                        log::info!("Resolved PATH from {shell}: {path}");
+                        return Some(path.to_string());
+                    }
+                }
+            }
+        }
+    }
+    log::warn!("Failed to resolve PATH from login shell, using inherited PATH");
+    None
+}
+
 // ── server process management ─────────────────────────────────────────────────
 
 #[cfg(not(debug_assertions))]
@@ -661,21 +695,66 @@ fn main() {
                 });
             }
 
+            let shell_path = get_shell_path();
+
             #[cfg(debug_assertions)]
             {
                 let server_dir = std::path::PathBuf::from(concat!(
                     env!("CARGO_MANIFEST_DIR"),
                     "/../../../apps/server"
                 ));
-                match std::process::Command::new("bun")
-                    .args(["run", "--watch", "src/index.ts"])
+                let mut cmd = std::process::Command::new("bun");
+                cmd.args(["run", "--watch", "src/index.ts"])
                     .current_dir(&server_dir)
                     .env("LOG_DIR", "/tmp")
                     .env("LOG_LEVEL", "info")
-                    .spawn()
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped());
                 {
-                    Ok(child) => {
+                    let base = shell_path.as_deref().unwrap_or("");
+                    let combined = format!("{}:{}", server_dir.display(), base);
+                    cmd.env("PATH", combined);
+                }
+                match cmd.spawn()
+                {
+                    Ok(mut child) => {
                         log::info!("Server started in dev mode (bun --watch)");
+
+                        // Spawn threads to read stdout/stderr and emit events
+                        let stdout = child.stdout.take();
+                        let stderr = child.stderr.take();
+                        let app_handle = app.handle().clone();
+
+                        if let Some(stdout) = stdout {
+                            let handle = app_handle.clone();
+                            std::thread::spawn(move || {
+                                use std::io::BufRead;
+                                let reader = std::io::BufReader::new(stdout);
+                                for line in reader.lines() {
+                                    let Ok(line) = line else { break };
+                                    let _ = handle.emit("server-log", ServerLog {
+                                        stream: "stdout".into(),
+                                        line,
+                                    });
+                                }
+                            });
+                        }
+
+                        if let Some(stderr) = stderr {
+                            let handle = app_handle.clone();
+                            std::thread::spawn(move || {
+                                use std::io::BufRead;
+                                let reader = std::io::BufReader::new(stderr);
+                                for line in reader.lines() {
+                                    let Ok(line) = line else { break };
+                                    let _ = handle.emit("server-log", ServerLog {
+                                        stream: "stderr".into(),
+                                        line,
+                                    });
+                                }
+                            });
+                        }
+
                         app.manage(ServerProcess(Mutex::new(Some(ServerHandle::Dev(child)))));
                     }
                     Err(e) => {
@@ -688,7 +767,17 @@ fn main() {
             #[cfg(not(debug_assertions))]
             {
                 let result = (|| -> Result<_, Box<dyn std::error::Error>> {
-                    let cmd = app.shell().sidecar("server")?;
+                    let mut cmd = app.shell().sidecar("server")?;
+                    // 把 sidecar 二进制所在目录加到 PATH，方便 server 找到同目录下的脚本/工具
+                    let sidecar_dir = std::env::current_exe()
+                        .ok()
+                        .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+                    let base = shell_path.as_deref().unwrap_or("");
+                    let path_val = match sidecar_dir {
+                        Some(dir) => format!("{}:{}", dir.display(), base),
+                        None => base.to_string(),
+                    };
+                    cmd = cmd.env("PATH", &path_val);
                     Ok(cmd.spawn()?)
                 })();
 
@@ -696,9 +785,29 @@ fn main() {
                     Ok((rx, child)) => {
                         log::info!("Server sidecar started");
                         app.manage(ServerProcess(Mutex::new(Some(ServerHandle::Sidecar(child)))));
+                        let app_handle = app.handle().clone();
                         tauri::async_runtime::spawn(async move {
+                            use tauri_plugin_shell::process::CommandEvent;
                             let mut rx = rx;
-                            while rx.recv().await.is_some() {}
+                            while let Some(event) = rx.recv().await {
+                                match event {
+                                    CommandEvent::Stdout(bytes) => {
+                                        let line = String::from_utf8_lossy(&bytes).to_string();
+                                        let _ = app_handle.emit("server-log", ServerLog {
+                                            stream: "stdout".into(),
+                                            line,
+                                        });
+                                    }
+                                    CommandEvent::Stderr(bytes) => {
+                                        let line = String::from_utf8_lossy(&bytes).to_string();
+                                        let _ = app_handle.emit("server-log", ServerLog {
+                                            stream: "stderr".into(),
+                                            line,
+                                        });
+                                    }
+                                    _ => {}
+                                }
+                            }
                         });
                     }
                     Err(e) => {

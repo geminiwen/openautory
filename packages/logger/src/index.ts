@@ -28,10 +28,7 @@ export class Logger {
     const entry = { time: new Date().toISOString(), level, name: this.name, msg, ...data };
     const line = JSON.stringify(entry);
 
-    if (level === 'debug') console.debug(line);
-    else if (level === 'warn') console.warn(line);
-    else if (level === 'error') console.error(line);
-    else console.log(line);
+    console.log(line);
 
     this.ensureStream()?.write(line + '\n');
   }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import {
   CloseOutlined,
+  CodeOutlined,
   FullscreenExitOutlined,
   FullscreenOutlined,
   MinusOutlined,
@@ -23,6 +24,7 @@ import Chat, {
   updateBlockToolProgress,
   updateBlockToolSummary,
 } from './components/Chat';
+import LogPanel from './components/LogPanel';
 import Sidebar, { type ProjectInfo } from './components/Sidebar';
 import { useWebSocket } from './hooks/useWebSocket';
 import { getServerUrl } from './components/Settings';
@@ -46,6 +48,7 @@ const appTheme = {
 
 export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [logPanelOpen, setLogPanelOpen] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
   const isMacLike = useMemo(() => /Mac|iPhone|iPad|iPod/.test(navigator.userAgent), []);
 
@@ -388,6 +391,12 @@ export default function App() {
             <div className={styles.titlebarActions} data-no-drag="true">
               <Button
                 className={styles.actionBtn}
+                icon={<CodeOutlined />}
+                type="text"
+                onClick={() => setLogPanelOpen((v) => !v)}
+              />
+              <Button
+                className={styles.actionBtn}
                 icon={<SettingOutlined />}
                 type="text"
                 onClick={() => setSettingsOpen(true)}
@@ -448,6 +457,7 @@ export default function App() {
                 onSwitchProject={handleSwitchProject}
                 onAddProject={handleAddProject}
               />
+              <LogPanel open={logPanelOpen} onClose={() => setLogPanelOpen(false)} />
             </div>
           </Content>
 
