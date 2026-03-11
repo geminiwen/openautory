@@ -7,6 +7,14 @@ import type { UnifiedMessage, UserRole } from '@openautory/shared';
 import { createLogger } from '@openautory/logger';
 import type { Logger } from '@openautory/logger';
 
+/**
+ * 将工作目录路径编码为 Claude Code session 目录名。
+ * 所有非字母数字字符替换为 '-'。
+ */
+export function encodeCwd(cwd: string): string {
+  return cwd.replace(/[^a-zA-Z0-9]/g, '-');
+}
+
 export interface AgentConfig {
   /** Claude 模型，默认使用 CLI 配置 */
   model?: string;
@@ -157,7 +165,7 @@ export class AgentCore {
   private hasRealSessionData(sessionId: string): boolean {
     if (!sessionId) return false;
     const cwd = this.config.cwd ?? process.cwd();
-    const encoded = cwd.replace(/[/.]/g, '-');
+    const encoded = encodeCwd(cwd);
     const file = path.join(os.homedir(), '.claude', 'projects', encoded, `${sessionId}.jsonl`);
     if (!fs.existsSync(file)) return false;
     const lines = fs.readFileSync(file, 'utf8').split('\n').filter(l => l.trim());
@@ -187,7 +195,7 @@ export class AgentCore {
   /** 清除指定会话（删除磁盘上的 .jsonl 文件） */
   clearSession(sessionId: string): void {
     const cwd = this.config.cwd ?? process.cwd();
-    const encoded = cwd.replace(/[/.]/g, '-');
+    const encoded = encodeCwd(cwd);
     const file = path.join(os.homedir(), '.claude', 'projects', encoded, `${sessionId}.jsonl`);
     if (fs.existsSync(file)) {
       fs.rmSync(file);

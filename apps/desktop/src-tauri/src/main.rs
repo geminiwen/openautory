@@ -24,12 +24,17 @@ fn expand_home(cwd: &str) -> Result<PathBuf, String> {
     }
 }
 
+fn encode_cwd(cwd: &str) -> String {
+    cwd.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect()
+}
+
 fn session_dir(cwd: &str) -> Result<PathBuf, String> {
     let expanded = expand_home(cwd)?;
-    let encoded = expanded
-        .to_str()
-        .ok_or("Invalid cwd path")?
-        .replace(['/', '.'], "-");
+    let encoded = encode_cwd(
+        expanded.to_str().ok_or("Invalid cwd path")?,
+    );
     let home = std::env::var("HOME")
         .map(PathBuf::from)
         .map_err(|_| "Cannot determine home directory".to_string())?;
@@ -1096,4 +1101,46 @@ fn main() {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::encode_cwd;
+
+    #[test]
+    fn replaces_slashes_and_dots() {
+        assert_eq!(
+            encode_cwd("/Users/geminiwen/Code/openautory"),
+            "-Users-geminiwen-Code-openautory"
+        );
+    }
+
+    #[test]
+    fn replaces_underscores() {
+        assert_eq!(
+            encode_cwd("/Users/cosmos_pro/.autory"),
+            "-Users-cosmos-pro--autory"
+        );
+    }
+
+    #[test]
+    fn replaces_spaces() {
+        assert_eq!(
+            encode_cwd("/Users/my user/project"),
+            "-Users-my-user-project"
+        );
+    }
+
+    #[test]
+    fn preserves_alphanumeric() {
+        assert_eq!(encode_cwd("abc123"), "abc123");
+    }
+
+    #[test]
+    fn replaces_all_special_characters() {
+        assert_eq!(
+            encode_cwd("/home/user@host:~/my-project (v2)"),
+            "-home-user-host---my-project--v2-"
+        );
+    }
 }

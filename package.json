@@ -14,6 +14,7 @@
     "kill:3000": "sh -c 'pids=$(lsof -ti tcp:3000); if [ -n \"$pids\" ]; then kill -9 $pids; fi'",
     "dev:clean": "bun run kill:3000 && bun run dev",
     "dev": "bun run --filter @openautory/desktop tauri:dev",
+    "clean": "bun scripts/clean.ts",
     "build": "bun scripts/build.ts",
     "build:sidecar": "bun scripts/build.ts sidecar",
     "build:desktop": "bun scripts/build.ts desktop"
